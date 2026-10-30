@@ -282,8 +282,16 @@ impl Lexer {
             // Texto completo del literal, para caer a f64 si no cabe en i128.
             let texto_f64 = format!(
                 "{}.{}e{}",
-                if parte_entera.is_empty() { "0" } else { &parte_entera },
-                if parte_fraccion.is_empty() { "0" } else { &parte_fraccion },
+                if parte_entera.is_empty() {
+                    "0"
+                } else {
+                    &parte_entera
+                },
+                if parte_fraccion.is_empty() {
+                    "0"
+                } else {
+                    &parte_fraccion
+                },
                 exponente
             );
 

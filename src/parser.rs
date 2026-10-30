@@ -951,6 +951,64 @@ impl Parser {
 
     /// Parsea un `si`/`sino si` desde la condición (sin consumir 'si').
     /// Soporta tanto `si (cond)` con paréntesis como `si cond` sin paréntesis.
+    /// `si (cond) { … } sino { … }` como **expresión**: se usa como elemento de
+    /// una lista de argumentos (`columna(a, si (x) { b } sino { c })`), donde lo
+    /// que produce son elementos de UI y no un valor. El token actual es `si`.
+    fn parse_si_expresion(&mut self) -> Result<Expresion, ErrorForja> {
+        self.avanzar(); // consume 'si'
+        self.parse_si_expresion_desde_condicion()
+    }
+
+    /// Igual que [`Self::parse_si_expresion`] pero sin consumir el `si` inicial,
+    /// para poder encadenar `sino si`.
+    fn parse_si_expresion_desde_condicion(&mut self) -> Result<Expresion, ErrorForja> {
+        let condicion = if self.coincide(TokenKind::ParenAbrir) {
+            self.avanzar();
+            let cond = self.parse_expresion()?;
+            self.esperar(
+                TokenKind::ParenCerrar,
+                "Se esperaba ')' después de la condición.",
+            )?;
+            cond
+        } else {
+            self.parse_expresion()?
+        };
+
+        self.esperar(
+            TokenKind::LlaveAbrir,
+            "Se esperaba '{' para el bloque del 'si'.",
+        )?;
+        let bloque_verdadero = self.parse_bloque()?;
+
+        let bloque_falso = if self.coincide(TokenKind::Sino) {
+            self.avanzar(); // consume 'sino'
+            if self.coincide(TokenKind::Si) {
+                let anidado = self.parse_si_expresion()?;
+                Some(vec![Declaracion::Expresion(anidado)])
+            } else {
+                self.esperar(
+                    TokenKind::LlaveAbrir,
+                    "Se esperaba '{' para el bloque del 'sino'.",
+                )?;
+                Some(self.parse_bloque()?)
+            }
+        } else if self.coincide(TokenKind::O)
+            && self.peek_siguiente().map(|t| &t.kind) == Some(&TokenKind::Si)
+        {
+            self.avanzar(); // consume 'o'
+            let anidado = self.parse_si_expresion()?;
+            Some(vec![Declaracion::Expresion(anidado)])
+        } else {
+            None
+        };
+
+        Ok(Expresion::Si {
+            condicion: Box::new(condicion),
+            bloque_verdadero,
+            bloque_falso,
+        })
+    }
+
     fn parse_si_desde_condicion(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
         // Parse condition — puede llevar paréntesis o no
         let condicion = if self.coincide(TokenKind::ParenAbrir) {
@@ -1320,12 +1378,25 @@ impl Parser {
         Ok(Some(Declaracion::Expresion(Expresion::Hilo { cuerpo })))
     }
 
-    /// canal()  → como declaración
+    /// canal() o canal(capacidad) → como declaración
     fn parse_canal(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
         self.avanzar(); // consumir 'canal'
+        let capacidad = self.parse_canal_capacidad()?;
+        Ok(Some(Declaracion::Expresion(Expresion::CanalNuevo(
+            capacidad,
+        ))))
+    }
+
+    /// Argumento opcional de `canal(...)`: la capacidad de la cola.
+    fn parse_canal_capacidad(&mut self) -> Result<Option<Box<Expresion>>, ErrorForja> {
         self.esperar(TokenKind::ParenAbrir, "Se esperaba '(' después de 'canal'.")?;
+        if self.coincide(TokenKind::ParenCerrar) {
+            self.avanzar();
+            return Ok(None);
+        }
+        let capacidad = self.parse_expresion()?;
         self.esperar(TokenKind::ParenCerrar, "Se esperaba ')' después de '('.")?;
-        Ok(Some(Declaracion::Expresion(Expresion::CanalNuevo)))
+        Ok(Some(Box::new(capacidad)))
     }
 
     /// seleccionar {
@@ -2385,6 +2456,11 @@ impl Parser {
             });
         }
 
+        // si (cond) { ... } sino { ... } como expresión (layouts condicionales)
+        if self.coincide(TokenKind::Si) {
+            return self.parse_si_expresion();
+        }
+
         // hilo { ... } como expresión
         if self.coincide(TokenKind::Hilo) {
             self.avanzar();
@@ -2393,12 +2469,11 @@ impl Parser {
             return Ok(Expresion::Hilo { cuerpo });
         }
 
-        // canal() como expresión
+        // canal() o canal(capacidad) como expresión
         if self.coincide(TokenKind::Canal) {
             self.avanzar();
-            self.esperar(TokenKind::ParenAbrir, "Se esperaba '(' después de 'canal'.")?;
-            self.esperar(TokenKind::ParenCerrar, "Se esperaba ')' después de '('.")?;
-            return Ok(Expresion::CanalNuevo);
+            let capacidad = self.parse_canal_capacidad()?;
+            return Ok(Expresion::CanalNuevo(capacidad));
         }
 
         // `resultado` - valor de retorno en postcondiciones (Design by Contract)
@@ -3507,6 +3582,37 @@ mod tests {
                 assert_eq!(nombre, "x");
             }
             _ => panic!("Se esperaba Declaracion::Variable"),
+        }
+    }
+
+    #[test]
+    fn test_parse_si_dentro_de_argumentos() {
+        // `si` como elemento de una lista de argumentos (layouts condicionales).
+        // Antes el parser descartaba la llamada entera y dejaba las condiciones
+        // sueltas como expresiones, sin avisar.
+        let prog = parse_source(
+            "columna(etiqueta(\"a\"), si (x > 0) { boton(\"s\") } sino { texto(\"n\") })",
+        )
+        .unwrap();
+        let (nombre, argumentos) = match &prog.declaraciones[0] {
+            Declaracion::LlamadaFuncion { nombre, argumentos } => (nombre, argumentos),
+            Declaracion::Expresion(Expresion::LlamadaFuncion { nombre, argumentos }) => {
+                (nombre, argumentos)
+            }
+            otra => panic!("se esperaba la llamada a columna, llegó: {otra:?}"),
+        };
+        assert_eq!(nombre, "columna");
+        assert_eq!(argumentos.len(), 2);
+        match &argumentos[1] {
+            Expresion::Si {
+                bloque_verdadero,
+                bloque_falso,
+                ..
+            } => {
+                assert_eq!(bloque_verdadero.len(), 1);
+                assert_eq!(bloque_falso.as_ref().map(|b| b.len()), Some(1));
+            }
+            otra => panic!("se esperaba Expresion::Si, llegó: {otra:?}"),
         }
     }
 

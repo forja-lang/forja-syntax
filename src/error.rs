@@ -24,7 +24,9 @@ pub mod color {
     pub const GRIS: &str = "\x1b[90m";
     pub const RESET: &str = "\x1b[0m";
     pub const NEGRITA: &str = "\x1b[1m";
+    pub const NEGRO: &str = "\x1b[30m";
     pub const ROJO_FONDO: &str = "\x1b[41m";
+    pub const VERDE_FONDO: &str = "\x1b[42m";
     pub const AMARILLO_FONDO: &str = "\x1b[43m";
     pub const SUBRAYADO: &str = "\x1b[4m";
     pub const DIM: &str = "\x1b[2m";
@@ -70,33 +72,70 @@ pub mod color {
     }
 }
 
-/// Color helper: info (cyan), ok (green), warning (yellow), error (red), debug (grey)
+/// Distintivo con fondo de color. Sin color queda como ` OK `, ` ERROR `, etc.
+fn distintivo(texto: &str, fondo: &str) -> String {
+    format!(
+        "{}{}{} {} {}",
+        color::NEGRITA,
+        color::NEGRO,
+        fondo,
+        texto,
+        color::RESET
+    )
+}
+
+/// Respeta `--no-color`: si el color está apagado, quita las secuencias ANSI.
+fn con_color(s: String) -> String {
+    if color_mode() {
+        s
+    } else {
+        limpiar_ansi(&s)
+    }
+}
+
+/// Helpers de log: info (cyan), ok (verde), warning (ámbar), error (rojo), debug (gris).
 pub fn info(msg: &str) -> String {
-    format!("{}{}{}", color::CYAN, msg, color::RESET)
+    con_color(format!("{} {}", color::negrita("INFO"), color::cyan(msg)))
 }
 pub fn ok(msg: &str) -> String {
-    format!("{}{}{}", color::VERDE, msg, color::RESET)
+    con_color(format!("{}{}{}", color::VERDE, msg, color::RESET))
 }
 pub fn exito(msg: &str) -> String {
-    format!("{}✅ {} {}", color::VERDE, msg, color::RESET)
+    con_color(format!(
+        "{} {}",
+        distintivo("OK", color::VERDE_FONDO),
+        color::verde(msg)
+    ))
 }
 pub fn warning(msg: &str) -> String {
-    format!("{}⚠️ {} {}", color::AMARILLO, msg, color::RESET)
+    con_color(format!(
+        "{} {}",
+        distintivo("AVISO", color::AMARILLO_FONDO),
+        color::amarillo(msg)
+    ))
 }
 pub fn error(msg: &str) -> String {
-    format!("{}❌ {} {}", color::ROJO, msg, color::RESET)
+    con_color(format!(
+        "{} {}",
+        distintivo("ERROR", color::ROJO_FONDO),
+        color::rojo(msg)
+    ))
 }
 pub fn debug_msg(msg: &str) -> String {
-    format!("{}🔍 {} {}", color::GRIS, msg, color::RESET)
+    con_color(format!("{} {}", color::negrita("DEBUG"), color::gris(msg)))
 }
 pub fn resaltado(msg: &str) -> String {
-    format!("{}{}{}", color::NEGRITA, msg, color::RESET)
+    con_color(format!("{}{}{}", color::NEGRITA, msg, color::RESET))
 }
 pub fn archivo(msg: &str) -> String {
-    format!("{}📄 {} {}", color::AMARILLO, msg, color::RESET)
+    con_color(format!(
+        "{} {}",
+        color::negrita("ARCHIVO"),
+        color::amarillo(msg)
+    ))
 }
 pub fn numero(msg: &str) -> String {
-    format!("{}{}{}", color::MAGENTA, msg, color::RESET)
+    con_color(format!("{}{}{}", color::MAGENTA, msg, color::RESET))
 }
 
 // ============================================================
@@ -468,8 +507,10 @@ impl ErrorForja {
     /// Muestra el error como una línea compacta coloreada
     pub fn mostrar_compacto(&self) -> String {
         let s = format!(
-            "{} {} {}—{} línea {}{}{}: {}",
-            emoji_para(&self.tipo),
+            "{}{}●{} {} {}—{} línea {}{}{}: {}",
+            color::NEGRITA,
+            self.tipo.color_ansi(),
+            color::RESET,
             color::negrita(categoria_educativa(&self.tipo)),
             color::GRIS,
             color::RESET,
@@ -525,20 +566,6 @@ impl ErrorForja {
     }
 }
 
-/// Emoji según categoría de error
-pub fn emoji_para(tipo: &ErrorTipo) -> &'static str {
-    match tipo {
-        ErrorTipo::ErrorLexico => "📝",
-        ErrorTipo::ErrorSintactico => "📖",
-        ErrorTipo::ErrorDeTipo => "🔤",
-        ErrorTipo::ErrorDePropiedad => "🏷️",
-        ErrorTipo::ErrorSemantico => "🧠",
-        ErrorTipo::ErrorInterno => "⚙️",
-        ErrorTipo::LimiteArchivo { .. } => "📦",
-        ErrorTipo::DemasiadaAnidacion { .. } => "🔄",
-    }
-}
-
 /// Nombre educativo según categoría
 pub fn categoria_educativa(tipo: &ErrorTipo) -> &'static str {
     match tipo {
@@ -577,10 +604,11 @@ pub fn limpiar_ansi(s: &str) -> String {
 
 impl fmt::Display for ErrorForja {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let _tipo_str = format!("{}", self.tipo);
         let s = format!(
-            "{} {} — {}línea {}{} — {} {}",
-            emoji_para(&self.tipo),
+            "{}{}●{} {} — {}línea {}{}{} — {}",
+            color::NEGRITA,
+            self.tipo.color_ansi(),
+            color::RESET,
             color::negrita(categoria_educativa(&self.tipo)),
             color::GRIS,
             color::AMARILLO,
@@ -588,6 +616,17 @@ impl fmt::Display for ErrorForja {
             color::RESET,
             self.mensaje,
         );
+        let s = if self.sugerencia.is_empty() {
+            s
+        } else {
+            format!(
+                "{}\n  {}Ayuda:{} {}",
+                s,
+                color::CYAN,
+                color::RESET,
+                self.sugerencia
+            )
+        };
         if color_mode() {
             write!(f, "{}", s)
         } else {
@@ -603,7 +642,7 @@ impl fmt::Display for ErrorForja {
 ///
 /// Salida típica:
 /// ```text
-/// ✗ Error en ejecución: división por cero: no se puede dividir entre 0 (revisa el divisor)
+///  ERROR  En ejecución: división por cero: no se puede dividir entre 0 (revisa el divisor)
 ///
 /// Pila de llamadas (más reciente primero):
 ///   en dividir (línea 12)
@@ -613,8 +652,8 @@ impl fmt::Display for ErrorForja {
 pub fn formatear_error_runtime(mensaje: &str, backtrace: &[String]) -> String {
     let mut out = String::new();
     let cabecera = format!(
-        "{} Error en ejecución: {}",
-        emoji_para(&ErrorTipo::ErrorInterno),
+        "{} En ejecución: {}",
+        distintivo("ERROR", color::ROJO_FONDO),
         mensaje
     );
     if color_mode() {
@@ -656,7 +695,12 @@ pub fn mostrar_errores(source: &str, errores: &[ErrorForja], json_mode: bool) {
     let total = errores.len();
     for (i, err) in errores.iter().enumerate() {
         if total > 1 {
-            eprintln!("{} {}/{}", error("Error"), i + 1, total);
+            eprintln!(
+                "{} {}/{}",
+                distintivo("ERROR", color::ROJO_FONDO),
+                i + 1,
+                total
+            );
         }
         eprintln!("{}", err.mostrar_con_contexto(source));
     }

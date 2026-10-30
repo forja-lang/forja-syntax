@@ -238,12 +238,25 @@ pub enum Expresion {
     },
     /// Expresión agrupada (ej: (a + b) * c)
     Grupo(Box<Expresion>),
+    /// `si (cond) { … } sino { … }` usado como **elemento** dentro de una lista
+    /// de argumentos, para layouts condicionales:
+    /// `columna(etiqueta("a"), si (x > 0) { grafico() } sino { texto("b") })`.
+    ///
+    /// Las ramas son sentencias (igual que en la forma de declaración) porque lo
+    /// que producen son elementos de UI, no un valor. Sólo el runtime de GUI le
+    /// da sentido: en el resto de las rutas es un error de compilación.
+    Si {
+        condicion: Box<Expresion>,
+        bloque_verdadero: Vec<Declaracion>,
+        bloque_falso: Option<Vec<Declaracion>>,
+    },
     /// Hilo ligero (ej: hilo { ... })
     Hilo {
         cuerpo: Vec<Declaracion>,
     },
-    /// Crear canal de comunicación (ej: canal())
-    CanalNuevo,
+    /// Crear canal de comunicación (ej: `canal()` sin límite, `canal(64)` con
+    /// capacidad = backpressure: `enviar` bloquea cuando la cola está llena).
+    CanalNuevo(Option<Box<Expresion>>),
     /// Operador de propagación de errores (expr?)
     Try(Box<Expresion>),
     /// Seleccionar entre múltiples canales

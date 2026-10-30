@@ -1090,8 +1090,13 @@ impl Lexer {
                     }
                     self.advance();
                 }
-                // Consumir whitespace (incluye el salto de línea) y continuar
+                // Consumir whitespace (incluye el salto de línea) y continuar.
+                // Hace falta volver a pasar por `skip_comentarios`: los `//` se
+                // omiten en `tokenize()`, no en `next_token()`, así que sin esto
+                // un `// …` en la línea siguiente a un `#` se lexeaba como dos
+                // divisiones y su texto como código.
                 self.skip_whitespace();
+                self.skip_comentarios();
                 return self.next_token();
             }
 
@@ -1273,6 +1278,22 @@ mod tests {
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Variable);
         assert_eq!(tokens[4].kind, TokenKind::Identificador("y".to_string()));
+    }
+
+    #[test]
+    fn test_comentario_almohadilla_no_rompe_comentario_siguiente() {
+        // Un `#` seguido de un `//` no debe lexear el `//` como dos divisiones
+        // ni el texto del comentario como código (bug de `next_token`).
+        let source = "#\n// hola mundo\nvariable x = 5";
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        assert_eq!(tokens[0].kind, TokenKind::Variable);
+        assert!(
+            !tokens
+                .iter()
+                .any(|t| matches!(&t.kind, TokenKind::Identificador(n) if n == "hola")),
+            "el texto del comentario no debe ser un identificador: {tokens:?}"
+        );
     }
 
     #[test]

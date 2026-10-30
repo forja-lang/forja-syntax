@@ -1339,7 +1339,14 @@ mod tests {
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Numero(42));
-        assert_eq!(tokens[1].kind, TokenKind::Decimal(2.5));
+        assert_eq!(
+            tokens[1].kind,
+            TokenKind::Decimal {
+                valor: 2.5,
+                coeff: 25,
+                escala: 1,
+            }
+        );
     }
 
     #[test]

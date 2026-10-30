@@ -180,19 +180,18 @@ impl Parser {
             TokenKind::Seleccionar => self.parse_seleccionar(),
             TokenKind::Rasgo => self.parse_rasgo(),
             TokenKind::Tipo => {
-                // 'tipo' puede ser inicio de declaración de enum O nombre de variable
-                // (ej: tipo = "PALABRA_CLAVE" como asignación).
-                // Verificamos si el siguiente token es '=' para distinguir.
+                // 'tipo' es soft keyword: `tipo Nombre = …` declara un enum, pero
+                // `tipo = valor` es una asignación a una variable llamada `tipo`.
+                // Antes se intentaba `parse_statement_expresion`, que no conoce
+                // el keyword como identificador: fallaba y partía la asignación
+                // en dos sentencias (`tipo` y `valor`), perdiendo el `=`.
                 if self.pos + 1 < self.tokens.len()
                     && self.tokens[self.pos + 1].kind == TokenKind::Igual
                 {
-                    match self.parse_statement_expresion() {
-                        Ok(r) => Ok(r),
-                        Err(_) => {
-                            self.avanzar();
-                            return self.parse_declaracion();
-                        }
-                    }
+                    let tok = self.peek().clone();
+                    let (linea, columna) = (tok.linea, tok.columna);
+                    self.avanzar();
+                    self.parse_post_identificador("tipo".to_string(), linea, columna)
                 } else {
                     self.parse_enum()
                 }
@@ -2286,7 +2285,7 @@ impl Parser {
                 // Solo si el siguiente token está en la MISMA línea (si está en otra línea,
                 // es una declaración separada, no interpolación).
                 if self.hay_interpolacion() && linea_texto == self.peek().linea {
-                    return self.parse_string_interpolado(s);
+                    return self.parse_string_interpolado(s, linea_texto);
                 }
                 return Ok(Expresion::LiteralTexto(s));
             }
@@ -2656,6 +2655,7 @@ impl Parser {
     fn parse_string_interpolado(
         &mut self,
         primer_fragmento: String,
+        linea: usize,
     ) -> Result<Expresion, ErrorForja> {
         let mut expr = Expresion::LiteralTexto(primer_fragmento);
 
@@ -2683,7 +2683,13 @@ impl Parser {
                 }
                 // Si después del Texto hay más interpolación, continuar.
                 // Si no, hemos terminado.
-                if !self.hay_interpolacion() {
+                //
+                // La continuación tiene que seguir en la misma línea: el lexer
+                // deja un `Texto` final (posiblemente vacío) al cerrar el string,
+                // y sin este corte el siguiente identificador de la línea
+                // siguiente se tomaba como otra interpolación y se fusionaba con
+                // la sentencia de abajo (`a = "x=${b}"` + `c = 1` → `… + c = 1`).
+                if !self.hay_interpolacion() || self.peek().linea != linea {
                     break;
                 }
             } else {
@@ -3680,6 +3686,44 @@ mod tests {
                 assert_eq!(nombre, "x");
             }
             _ => panic!("Se esperaba Declaracion::Variable"),
+        }
+    }
+
+    #[test]
+    fn test_tipo_como_variable_en_asignacion() {
+        // `tipo` es soft keyword: `tipo = valor` es una asignación, no un enum.
+        // Antes se partía en dos sentencias y se perdía el `=`.
+        let prog = parse_source("funcion f() {\n    tipo = \"X\"\n}").unwrap();
+        let cuerpo = match &prog.declaraciones[0] {
+            Declaracion::Funcion { cuerpo, .. } => cuerpo,
+            otra => panic!("se esperaba una función, llegó: {otra:?}"),
+        };
+        assert_eq!(cuerpo.len(), 1);
+        match &cuerpo[0] {
+            Declaracion::Asignacion { nombre, valor, .. } => {
+                assert_eq!(nombre, "tipo");
+                assert!(matches!(**valor, Expresion::LiteralTexto(_)));
+            }
+            otra => panic!("se esperaba Declaracion::Asignacion, llegó: {otra:?}"),
+        }
+    }
+
+    #[test]
+    fn test_interpolacion_no_se_come_la_sentencia_siguiente() {
+        // El lexer deja un fragmento de texto vacío al cerrar el string: ese
+        // fragmento no debe enganchar el identificador de la línea siguiente.
+        let prog = parse_source("funcion f() {\n    a = \"v=${b}\"\n    a = 7\n}").unwrap();
+        let cuerpo = match &prog.declaraciones[0] {
+            Declaracion::Funcion { cuerpo, .. } => cuerpo,
+            otra => panic!("se esperaba una función, llegó: {otra:?}"),
+        };
+        assert_eq!(cuerpo.len(), 2, "se fusionaron dos sentencias: {cuerpo:?}");
+        match (&cuerpo[0], &cuerpo[1]) {
+            (Declaracion::Asignacion { valor, .. }, Declaracion::Asignacion { valor: v2, .. }) => {
+                assert!(matches!(**valor, Expresion::Binaria { .. }));
+                assert!(matches!(**v2, Expresion::LiteralNumero(7)));
+            }
+            otra => panic!("se esperaban dos asignaciones, llegaron: {otra:?}"),
         }
     }
 

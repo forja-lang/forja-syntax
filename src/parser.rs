@@ -1715,6 +1715,18 @@ impl Parser {
                         objeto: Box::new(expr),
                         indice: Box::new(indice2),
                     };
+                    // F12-T3: `m[i][j] = valor`. Los arreglos son referencias,
+                    // así que se escribe en el arreglo interno: `ArraySet` sobre
+                    // el `Index` exterior. Antes la asignación se descartaba en
+                    // silencio (las matrices 2D de los ejemplos no se llenaban).
+                    if self.coincide(TokenKind::Igual) {
+                        self.avanzar();
+                        let valor = self.parse_expresion()?;
+                        return Ok(Some(Declaracion::Expresion(Expresion::ArraySet {
+                            array: Box::new(expr),
+                            valor: Box::new(valor),
+                        })));
+                    }
                     continue;
                 }
 
@@ -1732,8 +1744,14 @@ impl Parser {
                             TokenKind::ParenCerrar,
                             "Se esperaba ')' después de los argumentos.",
                         )?;
-                        expr = Expresion::LlamadaFuncion {
-                            nombre: nombre_compuesto.clone(),
+                        // `a[i].metodo(args)`: se conserva la estructura (el
+                        // receptor es una expresión, no un nombre simple). Con
+                        // el nombre punteado el IR no podía resolver el objeto y
+                        // la llamada quedaba como `Call("metodo")` → "función no
+                        // definida".
+                        expr = Expresion::LlamadaMetodo {
+                            objeto: Box::new(expr),
+                            metodo: miembro,
                             argumentos,
                         };
                         continue;
@@ -1841,8 +1859,13 @@ impl Parser {
                         if self.coincide(TokenKind::Igual) {
                             self.avanzar();
                             let valor = self.parse_expresion()?;
+                            // Se aplican **los dos** índices: antes se perdía el
+                            // primero y `m[0][1] = 4` escribía en `m[1]`.
                             let full_index = Expresion::Index {
-                                objeto: Box::new(expr),
+                                objeto: Box::new(Expresion::Index {
+                                    objeto: Box::new(expr),
+                                    indice: Box::new(indice),
+                                }),
                                 indice: Box::new(indice2),
                             };
                             return Ok(Some(Declaracion::Expresion(Expresion::ArraySet {
@@ -1859,10 +1882,38 @@ impl Parser {
                     break;
                 }
 
-                return Ok(Some(Declaracion::Expresion(Expresion::Index {
+                // `x.campo[i].metodo(args)`: se sigue encadenando sobre el
+                // `Index` en vez de devolverlo como sentencia (antes el
+                // `.metodo(...)` posterior se perdía y la llamada no existía).
+                let mut base = Expresion::Index {
                     objeto: Box::new(expr),
                     indice: Box::new(indice),
-                })));
+                };
+                while self.coincide(TokenKind::Punto) {
+                    self.avanzar();
+                    let m2 = self.esperar_identificador(
+                        "Se esperaba un nombre de miembro después de '.'.",
+                    )?;
+                    if self.coincide(TokenKind::ParenAbrir) {
+                        self.avanzar();
+                        let argumentos = self.parse_argumentos()?;
+                        self.esperar(
+                            TokenKind::ParenCerrar,
+                            "Se esperaba ')' después de los argumentos.",
+                        )?;
+                        base = Expresion::LlamadaMetodo {
+                            objeto: Box::new(base),
+                            metodo: m2,
+                            argumentos,
+                        };
+                        continue;
+                    }
+                    base = Expresion::AccesoMiembro {
+                        objeto: Box::new(base),
+                        miembro: m2,
+                    };
+                }
+                return Ok(Some(Declaracion::Expresion(base)));
             }
 
             // nombre.miembro o nombre.miembro.submiembro...

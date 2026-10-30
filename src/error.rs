@@ -228,8 +228,14 @@ pub enum ErrorTipo {
     ErrorDeTipo,
     ErrorSemantico,
     ErrorInterno,
-    LimiteArchivo { ruta: String, max: u64, actual: u64 },
-    DemasiadaAnidacion { max: u32 },
+    LimiteArchivo {
+        ruta: Box<str>,
+        max: u64,
+        actual: u64,
+    },
+    DemasiadaAnidacion {
+        max: u32,
+    },
 }
 
 impl ErrorTipo {
@@ -290,15 +296,19 @@ impl fmt::Display for ErrorTipo {
 ///
 /// `fin == 0` significa "sin span explícito": el renderer subraya un solo
 /// carácter en `columna` (comportamiento histórico).
+///
+/// Columnas en `u32`: `usize` duplicaba el tamaño de `ErrorForja` sin aportar
+/// rango útil (ningún archivo fuente tiene más de 4·10⁹ columnas).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
-    pub inicio: usize,
-    pub fin: usize,
+    pub inicio: u32,
+    pub fin: u32,
 }
 
 impl Span {
     /// Span de un único carácter en la columna indicada.
     pub fn punto(columna: usize) -> Self {
+        let columna = columna as u32;
         Span {
             inicio: columna,
             fin: columna + 1,
@@ -307,13 +317,16 @@ impl Span {
 
     /// Span que cubre `[inicio, fin)`.
     pub fn rango(inicio: usize, fin: usize) -> Self {
-        Span { inicio, fin }
+        Span {
+            inicio: inicio as u32,
+            fin: fin as u32,
+        }
     }
 
     /// Longitud en caracteres del subrayado (mínimo 1).
     pub fn longitud(&self) -> usize {
         if self.fin > self.inicio {
-            self.fin - self.inicio
+            (self.fin - self.inicio) as usize
         } else {
             1
         }
@@ -326,10 +339,11 @@ pub struct ErrorForja {
     pub tipo: ErrorTipo,
     pub linea: usize,
     pub columna: usize,
-    pub mensaje: String,
-    pub sugerencia: String,
+    /// Inmutable tras construirse: `Box<str>` mantiene el error pequeño.
+    pub mensaje: Box<str>,
+    pub sugerencia: Box<str>,
     /// Código de diagnóstico (`E0308`, ...). Vacío = derivar de `tipo`.
-    pub codigo: String,
+    pub codigo: Box<str>,
     /// Rango de columnas señalado. `None` = usar `columna` como punto.
     pub span: Option<Span>,
 }
@@ -346,9 +360,9 @@ impl ErrorForja {
             tipo,
             linea,
             columna,
-            mensaje: mensaje.to_string(),
-            sugerencia: sugerencia.to_string(),
-            codigo: String::new(),
+            mensaje: mensaje.into(),
+            sugerencia: sugerencia.into(),
+            codigo: "".into(),
             span: None,
         }
     }
@@ -369,9 +383,9 @@ impl ErrorForja {
             tipo,
             linea,
             columna,
-            mensaje: mensaje.to_string(),
-            sugerencia: sugerencia.to_string(),
-            codigo: String::new(),
+            mensaje: mensaje.into(),
+            sugerencia: sugerencia.into(),
+            codigo: "".into(),
             span: Some(span),
         }
     }
@@ -468,7 +482,7 @@ impl ErrorForja {
             result.push_str(&format!(
                 "{}{}{}{}{}\n",
                 margen_vacio,
-                " ".repeat(indent),
+                " ".repeat(indent as usize),
                 color_arrow,
                 "^".repeat(largo),
                 color::RESET
@@ -543,7 +557,7 @@ impl ErrorForja {
 
     fn tipo_colorless(&self) -> String {
         match &self.tipo {
-            ErrorTipo::DemasiadaAnidacion { max: _ } => format!("DemasiadaAnidacion"),
+            ErrorTipo::DemasiadaAnidacion { max: _ } => "DemasiadaAnidacion".to_string(),
             _ => format!("{:?}", self.tipo),
         }
     }

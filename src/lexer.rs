@@ -1147,7 +1147,7 @@ impl Lexer {
                 self.advance(); // consumir comilla de apertura '
                                 // Verificar si es string de varios caracteres o caracter literal
                                 // 'a' → 1 char, siguiente es '. 'hola' → múltiples chars
-                if self.current().map_or(true, |c| c == '\'') {
+                if self.current().is_none_or(|c| c == '\'') {
                     // ' vacío o '' → tratar como caracter
                     return self.leer_caracter(linea, columna);
                 }

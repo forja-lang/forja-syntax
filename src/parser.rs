@@ -69,13 +69,9 @@ impl Parser {
                 let argumentos = if self.coincide(TokenKind::ParenAbrir) {
                     self.avanzar(); // consume (
                     let mut args = Vec::new();
-                    loop {
-                        if let TokenKind::Identificador(arg) = self.peek().kind.clone() {
-                            args.push(arg);
-                            self.avanzar();
-                        } else {
-                            break;
-                        }
+                    while let TokenKind::Identificador(arg) = self.peek().kind.clone() {
+                        args.push(arg);
+                        self.avanzar();
                         if self.coincide(TokenKind::Coma) {
                             self.avanzar();
                         } else {
@@ -213,33 +209,29 @@ impl Parser {
 
         // Asignar atributos a las declaraciones que los soportan
         if !atributos.is_empty() {
-            if let Ok(Some(ref mut d)) = decl {
-                match d {
-                    Declaracion::Clase {
-                        atributos: ref mut a,
-                        ..
-                    }
-                    | Declaracion::Funcion {
-                        atributos: ref mut a,
-                        ..
-                    }
-                    | Declaracion::Enum {
-                        atributos: ref mut a,
-                        ..
-                    } => {
-                        *a = atributos;
-                    }
-                    _ => {}
+            if let Ok(Some(
+                Declaracion::Clase {
+                    atributos: ref mut a,
+                    ..
                 }
+                | Declaracion::Funcion {
+                    atributos: ref mut a,
+                    ..
+                }
+                | Declaracion::Enum {
+                    atributos: ref mut a,
+                    ..
+                },
+            )) = decl
+            {
+                *a = atributos;
             }
         }
 
         // Asignar doc comment a la declaración (solo para Funcion por ahora)
         if let Some(doc_text) = doc_comment {
-            if let Ok(Some(ref mut d)) = decl {
-                if let Declaracion::Funcion { ref mut doc, .. } = d {
-                    *doc = Some(doc_text);
-                }
+            if let Ok(Some(Declaracion::Funcion { ref mut doc, .. })) = decl {
+                *doc = Some(doc_text);
             }
         }
 
@@ -1048,11 +1040,7 @@ impl Parser {
                 // sino si → otro condicional anidado (else if)
                 self.avanzar(); // consume 'si'
                 let sino_si = self.parse_si_desde_condicion()?;
-                if let Some(decl) = sino_si {
-                    Some(vec![decl])
-                } else {
-                    None
-                }
+                sino_si.map(|decl| vec![decl])
             } else {
                 self.esperar(
                     TokenKind::LlaveAbrir,
@@ -1066,11 +1054,7 @@ impl Parser {
             self.avanzar(); // consume 'o'
             self.avanzar(); // consume 'si'
             let o_si = self.parse_si_desde_condicion()?;
-            if let Some(decl) = o_si {
-                Some(vec![decl])
-            } else {
-                None
-            }
+            o_si.map(|decl| vec![decl])
         } else {
             None
         };
@@ -1836,7 +1820,7 @@ impl Parser {
                         array: Box::new(Expresion::Index {
                             objeto: Box::new(Expresion::AccesoMiembro {
                                 objeto: Box::new(Expresion::Identificador {
-                                    nombre: nombre,
+                                    nombre,
                                     linea,
                                     columna,
                                 }),
@@ -2633,21 +2617,21 @@ impl Parser {
         if self.es_eof() {
             return false;
         }
-        match &self.peek().kind {
+        matches!(
+            &self.peek().kind,
             TokenKind::Identificador(_)
-            | TokenKind::Numero(_)
-            | TokenKind::Decimal { .. }
-            | TokenKind::LiteralExacto(_, _)
-            | TokenKind::Caracter(_)
-            | TokenKind::ParenAbrir
-            | TokenKind::Menos
-            | TokenKind::No
-            | TokenKind::Verdadero
-            | TokenKind::Falso
-            | TokenKind::Nulo
-            | TokenKind::Este => true,
-            _ => false,
-        }
+                | TokenKind::Numero(_)
+                | TokenKind::Decimal { .. }
+                | TokenKind::LiteralExacto(_, _)
+                | TokenKind::Caracter(_)
+                | TokenKind::ParenAbrir
+                | TokenKind::Menos
+                | TokenKind::No
+                | TokenKind::Verdadero
+                | TokenKind::Falso
+                | TokenKind::Nulo
+                | TokenKind::Este
+        )
     }
 
     /// Parsea un string interpolado, construyendo una cadena de concatenaciones binarias
@@ -3651,7 +3635,7 @@ mod tests {
 
     fn parse_source(source: &str) -> Result<Programa, Vec<ErrorForja>> {
         let mut lexer = Lexer::new(source);
-        let tokens = lexer.tokenize().map_err(|e| e)?;
+        let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(tokens);
         parser.parse()
     }

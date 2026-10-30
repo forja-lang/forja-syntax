@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-/// Definiciones del Árbol de Sintaxis Abstracta (AST) para Forja (fa)
+// Definiciones del Árbol de Sintaxis Abstracta (AST) para Forja (fa)
 
 /// Operadores binarios
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

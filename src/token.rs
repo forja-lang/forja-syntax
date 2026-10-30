@@ -192,8 +192,14 @@ pub enum TokenKind {
     Identificador(String),
     /// Número entero
     Numero(i64),
-    /// Número decimal
-    Decimal(f64),
+    /// Número decimal con punto. Además del f64 se conservan los dígitos
+    /// exactos del fuente (`coeff`/`escala`) para que un destino decimal exacto
+    /// (`Exacto`, `Empaquetado`, `Moneda`) no herede el error binario de f64.
+    Decimal {
+        valor: f64,
+        coeff: i128,
+        escala: u32,
+    },
     /// Número exacto (BigDecimal) — coeficiente i128, escala u32 (dígitos decimales)
     LiteralExacto(i128, u32),
     /// Cadena de texto entre comillas dobles
@@ -296,7 +302,7 @@ impl fmt::Display for TokenKind {
             TokenKind::No => write!(f, "!"),
             TokenKind::Identificador(id) => write!(f, "identificador('{}')", id),
             TokenKind::Numero(n) => write!(f, "numero({})", n),
-            TokenKind::Decimal(d) => write!(f, "decimal({})", d),
+            TokenKind::Decimal { valor, .. } => write!(f, "decimal({})", valor),
             TokenKind::LiteralExacto(coeff, scale) => {
                 write!(f, "LiteralExacto({}, {})", coeff, scale)
             }

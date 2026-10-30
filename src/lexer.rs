@@ -279,6 +279,13 @@ impl Lexer {
             // Construir coeff a partir de dígitos significativos
             let digitos_str = format!("{}{}", parte_entera, parte_fraccion);
             let digitos_fraccionarios = parte_fraccion.len() as i32;
+            // Texto completo del literal, para caer a f64 si no cabe en i128.
+            let texto_f64 = format!(
+                "{}.{}e{}",
+                if parte_entera.is_empty() { "0" } else { &parte_entera },
+                if parte_fraccion.is_empty() { "0" } else { &parte_fraccion },
+                exponente
+            );
 
             if let Ok(coeff) = digitos_str.parse::<i128>() {
                 if exponente >= 0 {
@@ -286,8 +293,14 @@ impl Lexer {
                         // coeff * 10^(exponente - digitos_fraccionarios)
                         // Ej: 1.5e3 → partes "1","5", df=1, exp=3 ⇒ coeff=15, multiplier=10^2=100 ⇒ 1500, scale=0
                         let potencia = (exponente - digitos_fraccionarios) as u32;
-                        let multiplier = 10u128.pow(potencia) as i128;
-                        return TokenKind::LiteralExacto(coeff * multiplier, 0);
+                        // Sin panic: el corpus decTest usa exponentes enormes
+                        // (1e+999999999). Si no entra en i128, va a f64.
+                        if let Some(exacto) = 10_i128
+                            .checked_pow(potencia)
+                            .and_then(|m| coeff.checked_mul(m))
+                        {
+                            return TokenKind::LiteralExacto(exacto, 0);
+                        }
                     } else {
                         // Ej: 1.55e1 → partes "1","55", df=2, exp=1 ⇒ coeff=155, scale=1
                         let scale = (digitos_fraccionarios - exponente) as u32;
@@ -295,30 +308,45 @@ impl Lexer {
                     }
                 } else {
                     // exponente negativo: ej 1.5e-2 → partes "1","5", df=1, exp=-2 ⇒ coeff=15, scale=1+2=3
-                    let scale = (digitos_fraccionarios + (-exponente)) as u32;
+                    let scale = digitos_fraccionarios.saturating_add(-exponente) as u32;
                     return TokenKind::LiteralExacto(coeff, scale);
                 }
-            } else {
-                return TokenKind::Error('0');
             }
+
+            // Fuera del rango exacto (o demasiados dígitos): f64, que es el tipo
+            // que el lenguaje ya usa para `Decimal`. Nunca se aborta el compilador.
+            if let Ok(valor) = texto_f64.parse::<f64>() {
+                return TokenKind::Decimal {
+                    valor,
+                    coeff: 0,
+                    escala: 0,
+                };
+            }
+            return TokenKind::Error('0');
         }
 
         // Sin exponente
         if tiene_punto {
             let digitos_fraccionarios = parte_fraccion.len();
+            let digitos_str = format!("{}{}", parte_entera, parte_fraccion);
+            let coeff = digitos_str.parse::<i128>().ok();
             if digitos_fraccionarios > 15 {
                 // Más de 15 decimales → LiteralExacto
-                let digitos_str = format!("{}{}", parte_entera, parte_fraccion);
-                if let Ok(coeff) = digitos_str.parse::<i128>() {
+                if let Some(coeff) = coeff {
                     return TokenKind::LiteralExacto(coeff, digitos_fraccionarios as u32);
                 } else {
                     return TokenKind::Error('0');
                 }
             } else {
-                // Hasta 15 decimales → Decimal(f64) (comportamiento actual)
+                // Hasta 15 decimales → Decimal(f64), conservando los dígitos
+                // exactos para los destinos que no admiten error binario.
                 let num_str = format!("{}.{}", parte_entera, parte_fraccion);
                 if let Ok(val) = num_str.parse::<f64>() {
-                    return TokenKind::Decimal(val);
+                    return TokenKind::Decimal {
+                        valor: val,
+                        coeff: coeff.unwrap_or(0),
+                        escala: digitos_fraccionarios as u32,
+                    };
                 }
             }
         }

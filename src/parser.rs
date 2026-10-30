@@ -350,7 +350,19 @@ impl Parser {
         // Valor opcional
         let valor = if self.coincide(TokenKind::Igual) {
             self.avanzar();
-            Some(self.parse_expresion()?)
+            // Un literal con punto asignado a un tipo decimal exacto se construye
+            // desde los dígitos del fuente: pasar por f64 mete error binario
+            // (12.34 → 12.3399…), que es justo lo que hacía inútil a `Exacto`.
+            // shortcut: cubre el literal pelado; para expresiones hace falta
+            // resolución dirigida por tipo en el checker (fase 1 del plan).
+            if es_decimal_exacto(tipo.as_ref()) {
+                match self.literal_decimal_exacto() {
+                    Some(expresion) => Some(expresion),
+                    None => Some(self.parse_expresion()?),
+                }
+            } else {
+                Some(self.parse_expresion()?)
+            }
         } else {
             None
         };
@@ -2252,10 +2264,14 @@ impl Parser {
             }
         }
 
-        if self.coincide(TokenKind::Decimal(0.0)) || self.coincide(TokenKind::Decimal(f64::MIN)) {
-            if let TokenKind::Decimal(d) = self.peek().kind {
+        if self.coincide(TokenKind::Decimal {
+            valor: 0.0,
+            coeff: 0,
+            escala: 0,
+        }) {
+            if let TokenKind::Decimal { valor, .. } = self.peek().kind.clone() {
                 self.avanzar();
-                return Ok(Expresion::LiteralDecimal(d));
+                return Ok(Expresion::LiteralDecimal(valor));
             }
         }
 
@@ -2621,7 +2637,7 @@ impl Parser {
         match &self.peek().kind {
             TokenKind::Identificador(_)
             | TokenKind::Numero(_)
-            | TokenKind::Decimal(_)
+            | TokenKind::Decimal { .. }
             | TokenKind::LiteralExacto(_, _)
             | TokenKind::Caracter(_)
             | TokenKind::ParenAbrir
@@ -3337,7 +3353,7 @@ impl Parser {
             self.peek().kind,
             TokenKind::Identificador(_)
                 | TokenKind::Numero(_)
-                | TokenKind::Decimal(_)
+                | TokenKind::Decimal { .. }
                 | TokenKind::LiteralExacto(_, _)
                 | TokenKind::Texto(_)
                 | TokenKind::Caracter(_)
@@ -3531,7 +3547,7 @@ impl Parser {
                 }
             }
             TokenKind::Numero(_)
-            | TokenKind::Decimal(_)
+            | TokenKind::Decimal { .. }
             | TokenKind::LiteralExacto(_, _)
             | TokenKind::Texto(_)
             | TokenKind::Verdadero
@@ -3589,6 +3605,37 @@ fn es_ruta_absoluta(ruta: &str) -> bool {
         }
     }
     false
+}
+
+/// ¿El tipo declarado es un decimal exacto (no binario)?
+/// Los literales `variable x: Exacto = 12.34` deben construirse desde los dígitos
+/// del fuente, no desde el f64 que también trae el token.
+fn es_decimal_exacto(tipo: Option<&Tipo>) -> bool {
+    matches!(tipo, Some(Tipo::Exacto))
+}
+
+impl Parser {
+    /// Consume `[\-] DECIMAL` y devuelve el literal exacto con los dígitos del
+    /// fuente (el signo se aplica al coeficiente). Devuelve `None` sin consumir
+    /// nada si el próximo token no es un literal con punto.
+    fn literal_decimal_exacto(&mut self) -> Option<Expresion> {
+        let negativo = self.coincide(TokenKind::Menos);
+        let pos_inicial = self.pos;
+        if negativo {
+            self.avanzar();
+        }
+        match self.peek().kind.clone() {
+            TokenKind::Decimal { coeff, escala, .. } => {
+                self.avanzar();
+                let coeff = if negativo { -coeff } else { coeff };
+                Some(Expresion::LiteralExacto(coeff, escala))
+            }
+            _ => {
+                self.pos = pos_inicial;
+                None
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -12,6 +12,10 @@ pub struct Parser {
     profundidad: usize,
     /// Profundidad de anidamiento de paréntesis (para mensaje de error específico).
     profundidad_paren: usize,
+    /// El próximo literal decimal debe construirse como `LiteralExacto`
+    /// (coef + escala) porque el destino declarado es un decimal exacto:
+    /// `variable precio: Exacto = 0.1 + 0.2` no debe pasar por f64.
+    contexto_exacto: bool,
 }
 
 /// Límite máximo de profundidad de recursión global del parser.
@@ -30,6 +34,7 @@ impl Parser {
             errores: Vec::new(),
             profundidad: 0,
             profundidad_paren: 0,
+            contexto_exacto: false,
         }
     }
 
@@ -350,16 +355,15 @@ impl Parser {
         // Valor opcional
         let valor = if self.coincide(TokenKind::Igual) {
             self.avanzar();
-            // Un literal con punto asignado a un tipo decimal exacto se construye
-            // desde los dígitos del fuente: pasar por f64 mete error binario
-            // (12.34 → 12.3399…), que es justo lo que hacía inútil a `Exacto`.
-            // shortcut: cubre el literal pelado; para expresiones hace falta
-            // resolución dirigida por tipo en el checker (fase 1 del plan).
+            // Un literal con punto en una expresión cuyo destino es decimal exacto
+            // se construye desde los dígitos del fuente: pasar por f64 mete error
+            // binario (12.34 → 12.3399…), que es justo lo que hacía inútil a `Exacto`.
+            // Cubre toda la expresión (`0.1 + 0.2`), no sólo el literal pelado.
             if es_decimal_exacto(tipo.as_ref()) {
-                match self.literal_decimal_exacto() {
-                    Some(expresion) => Some(expresion),
-                    None => Some(self.parse_expresion()?),
-                }
+                let previo = std::mem::replace(&mut self.contexto_exacto, true);
+                let expresion = self.parse_expresion()?;
+                self.contexto_exacto = previo;
+                Some(expresion)
             } else {
                 Some(self.parse_expresion()?)
             }
@@ -2269,8 +2273,14 @@ impl Parser {
             coeff: 0,
             escala: 0,
         }) {
-            if let TokenKind::Decimal { valor, .. } = self.peek().kind.clone() {
+            if let TokenKind::Decimal { valor, coeff, escala } = self.peek().kind.clone() {
                 self.avanzar();
+                // Destino decimal exacto: construir desde los dígitos del fuente.
+                // El contexto vale para toda la expresión (`0.1 + 0.2`), no para el
+                // primer literal: el llamador lo restaura al terminar.
+                if self.contexto_exacto {
+                    return Ok(Expresion::LiteralExacto(coeff, escala));
+                }
                 return Ok(Expresion::LiteralDecimal(valor));
             }
         }
@@ -3026,19 +3036,25 @@ impl Parser {
             return Ok(argumentos);
         }
 
-        loop {
-            argumentos.push(self.parse_expresion()?);
-            if self.coincide(TokenKind::Coma) {
-                self.avanzar();
-                if self.coincide(TokenKind::ParenCerrar) {
+        // Los argumentos no heredan el destino exacto del llamador: `f(12.34)`
+        // depende del tipo del parámetro, no del tipo de la variable destino.
+        let contexto_previo = std::mem::replace(&mut self.contexto_exacto, false);
+        let resultado = (|| {
+            loop {
+                argumentos.push(self.parse_expresion()?);
+                if self.coincide(TokenKind::Coma) {
+                    self.avanzar();
+                    if self.coincide(TokenKind::ParenCerrar) {
+                        break;
+                    }
+                } else {
                     break;
                 }
-            } else {
-                break;
             }
-        }
-
-        Ok(argumentos)
+            Ok(argumentos)
+        })();
+        self.contexto_exacto = contexto_previo;
+        resultado
     }
 
     /// Parsea un tipo (para anotaciones de tipo)
@@ -3614,29 +3630,6 @@ fn es_decimal_exacto(tipo: Option<&Tipo>) -> bool {
     matches!(tipo, Some(Tipo::Exacto))
 }
 
-impl Parser {
-    /// Consume `[\-] DECIMAL` y devuelve el literal exacto con los dígitos del
-    /// fuente (el signo se aplica al coeficiente). Devuelve `None` sin consumir
-    /// nada si el próximo token no es un literal con punto.
-    fn literal_decimal_exacto(&mut self) -> Option<Expresion> {
-        let negativo = self.coincide(TokenKind::Menos);
-        let pos_inicial = self.pos;
-        if negativo {
-            self.avanzar();
-        }
-        match self.peek().kind.clone() {
-            TokenKind::Decimal { coeff, escala, .. } => {
-                self.avanzar();
-                let coeff = if negativo { -coeff } else { coeff };
-                Some(Expresion::LiteralExacto(coeff, escala))
-            }
-            _ => {
-                self.pos = pos_inicial;
-                None
-            }
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

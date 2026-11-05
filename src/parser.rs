@@ -2838,6 +2838,16 @@ impl Parser {
         if self.es_eof() {
             return false;
         }
+        // `->` después de un texto es la flecha de un `caso`, no una
+        // interpolación: sin esto `caso "hola" -> { … }` rompía el match.
+        if matches!(self.peek().kind, TokenKind::Menos)
+            && self
+                .peek_siguiente()
+                .map(|t| matches!(t.kind, TokenKind::Mayor))
+                .unwrap_or(false)
+        {
+            return false;
+        }
         matches!(
             &self.peek().kind,
             TokenKind::Identificador(_)

@@ -13,6 +13,7 @@
 #![forbid(unsafe_code)]
 
 pub mod ast;
+pub mod booleanos;
 pub mod error;
 pub mod lexer;
 pub mod parser;

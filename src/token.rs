@@ -102,7 +102,7 @@ pub enum TokenKind {
     Anterior,
 
     // === Tipos de datos ===
-    // F1-T6: variantes de tipo predefinido reconocidas por el parser y el LSP
+    // variantes de tipo predefinido reconocidas por el parser y el LSP
     // (aunque el lexer las emita como identificadores); se conservan como
     // parte de la superficie pública de `TokenKind`.
     /// `Texto` - tipo string
@@ -162,6 +162,18 @@ pub enum TokenKind {
     Dividido,
     /// `%` - módulo
     Porcentaje,
+
+    // === Operadores de asignación compuesta ===
+    /// `+=` - suma acumulada
+    MasIgual,
+    /// `-=` - resta acumulada
+    MenosIgual,
+    /// `*=` - multiplicación acumulada
+    PorIgual,
+    /// `/=` - división acumulada
+    DivididoIgual,
+    /// `%=` - módulo acumulado
+    PorcentajeIgual,
 
     // === Operadores relacionales ===
     /// `>` - mayor que
@@ -290,6 +302,11 @@ impl fmt::Display for TokenKind {
             TokenKind::Por => write!(f, "*"),
             TokenKind::Dividido => write!(f, "/"),
             TokenKind::Porcentaje => write!(f, "%"),
+            TokenKind::MasIgual => write!(f, "+="),
+            TokenKind::MenosIgual => write!(f, "-="),
+            TokenKind::PorIgual => write!(f, "*="),
+            TokenKind::DivididoIgual => write!(f, "/="),
+            TokenKind::PorcentajeIgual => write!(f, "%="),
             TokenKind::Mayor => write!(f, ">"),
             TokenKind::Menor => write!(f, "<"),
             TokenKind::MayorIgual => write!(f, ">="),

@@ -10,4 +10,4 @@ sin arrastrar el compilador completo.
 El crate `forja` reexporta estos módulos (`forja::ast`, `forja::lexer`, …) para
 preservar la API pública histórica.
 
-Parte del plan de mejoras (tarea **F3-T8**).
+Parte del plan de mejoras (tarea).

@@ -649,7 +649,7 @@ impl fmt::Display for ErrorForja {
     }
 }
 
-/// (F2-T7) Formatea un error de runtime de la VM con su backtrace en español.
+/// Formatea un error de runtime de la VM con su backtrace en español.
 ///
 /// `mensaje` es la descripción clara del error (p. ej. "división por cero: ...")
 /// y `backtrace` es la pila de llamadas con nombres de función Forja y líneas.

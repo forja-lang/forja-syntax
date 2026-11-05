@@ -12,6 +12,8 @@ pub struct Parser {
     profundidad: usize,
     /// Profundidad de anidamiento de paréntesis (para mensaje de error específico).
     profundidad_paren: usize,
+    /// Parámetros genéricos de tipo visibles en este punto (`funcion f<T>`, `clase C<T>`).
+    genericos: Vec<String>,
 }
 
 /// Límite máximo de profundidad de recursión global del parser.
@@ -30,6 +32,7 @@ impl Parser {
             errores: Vec::new(),
             profundidad: 0,
             profundidad_paren: 0,
+            genericos: Vec::new(),
         }
     }
 
@@ -43,13 +46,19 @@ impl Parser {
                 Ok(None) => break,
                 Err(err) => {
                     self.errores.push(err);
+                    // No arrastrar genéricos de una declaración que falló a medias.
+                    self.genericos.clear();
                     self.sincronizar();
                 }
             }
         }
 
         if self.errores.is_empty() {
-            Ok(Programa { declaraciones })
+            let mut programa = Programa { declaraciones };
+            // `v`/`f` como alias de verdadero/falso cuando no son una variable
+            // declarada (ver `booleanos`).
+            crate::booleanos::normalizar(&mut programa);
+            Ok(programa)
         } else {
             Err(self.errores.clone())
         }
@@ -193,6 +202,16 @@ impl Parser {
                 }
             }
             TokenKind::Implementa => self.parse_implementacion(),
+            // `resultado` es keyword (valor de retorno en postcondiciones) pero
+            // también se usa como variable corriente: `resultado = resultado + c`
+            // en posición de sentencia es una asignación. Antes se partía en dos
+            // sentencias y la asignación se perdía en silencio.
+            TokenKind::ResultadoKw => {
+                let tok = self.peek().clone();
+                let (linea, columna) = (tok.linea, tok.columna);
+                self.avanzar();
+                self.parse_post_identificador("resultado".to_string(), linea, columna)
+            }
             TokenKind::LlaveCerrar => Ok(None), // fin de bloque
             _ => {
                 // Token inesperado: intentar como expresión; si falla, saltar y reintentar
@@ -249,6 +268,12 @@ impl Parser {
         // Determinar si es mutable según el keyword
         let mutable = self.coincide(TokenKind::Variable);
         self.avanzar(); // consume 'variable' o 'constante'
+
+        // `variable mut x` (el `mut` es redundante: `variable` ya es mutable).
+        // Se acepta porque el LSP y los mensajes de error lo recomiendan.
+        if self.coincide(TokenKind::Mut) {
+            self.avanzar();
+        }
 
         // Pattern: variable (x, y) = canal()  → asignación múltiple con destructuring (tupla)
         if self.coincide(TokenKind::ParenAbrir) {
@@ -390,6 +415,8 @@ impl Parser {
 
         // Parsear parámetros de tipo genérico <T, U> si existen
         let parametros_tipo = self.parse_parametros_tipo()?;
+        let genericos_prev = self.genericos.len();
+        self.abrir_genericos(&parametros_tipo);
 
         self.esperar(
             TokenKind::ParenAbrir,
@@ -430,6 +457,7 @@ impl Parser {
                 "Se esperaba ';' al final de la declaración externa.",
             )?;
             let enlace_nombre = Some(nombre.clone());
+            self.genericos.truncate(genericos_prev);
             Ok(Some(Declaracion::Funcion {
                 nombre,
                 parametros_tipo: vec![],
@@ -453,6 +481,7 @@ impl Parser {
                 "Se esperaba '{' para el cuerpo de la función.",
             )?;
             let cuerpo = self.parse_bloque()?;
+            self.genericos.truncate(genericos_prev);
 
             Ok(Some(Declaracion::Funcion {
                 nombre,
@@ -537,9 +566,11 @@ impl Parser {
 
         // Parsear parámetros de tipo genérico <T, U> si existen
         let parametros_tipo = self.parse_parametros_tipo()?;
+        let genericos_prev = self.genericos.len();
+        self.abrir_genericos(&parametros_tipo);
 
         // Parsear invariantes de clase (siempre)
-        let invariantes = self.parse_invariantes()?;
+        let mut invariantes = self.parse_invariantes()?;
 
         self.esperar(
             TokenKind::LlaveAbrir,
@@ -552,6 +583,12 @@ impl Parser {
         while !self.coincide(TokenKind::LlaveCerrar) && !self.es_eof() {
             if self.coincide(TokenKind::Constructor) || self.coincide(TokenKind::Funcion) {
                 metodos.push(self.parse_metodo_en_clase()?);
+            } else if self.coincide(TokenKind::Siempre) {
+                // los `siempre` también se aceptan **dentro** del cuerpo.
+                // Antes caían en `parse_campo_en_clase` y se descartaban en
+                // silencio (el invariante no se registraba y el parser no
+                // avisaba).
+                invariantes.extend(self.parse_invariantes()?);
             } else {
                 // Es una declaración de campo
                 self.parse_campo_en_clase(&mut campos)?;
@@ -562,6 +599,7 @@ impl Parser {
             TokenKind::LlaveCerrar,
             "Se esperaba '}' para cerrar la clase.",
         )?;
+        self.genericos.truncate(genericos_prev);
 
         Ok(Some(Declaracion::Clase {
             nombre,
@@ -580,11 +618,13 @@ impl Parser {
         let nombre = self.esperar_identificador("Se esperaba el nombre del rasgo.")?;
 
         // Parámetros de tipo genérico opcionales: rasgo Nombre<T>
-        let _parametros_tipo = if self.coincide(TokenKind::Menor) {
+        let parametros_tipo = if self.coincide(TokenKind::Menor) {
             self.parse_parametros_tipo()?
         } else {
             Vec::new()
         };
+        let genericos_prev = self.genericos.len();
+        self.abrir_genericos(&parametros_tipo);
 
         // Herencia opcional: rasgo Hijo : Padre
         if self.coincide(TokenKind::DosPuntos) {
@@ -665,6 +705,7 @@ impl Parser {
             TokenKind::LlaveCerrar,
             "Se esperaba '}' para cerrar el rasgo.",
         )?;
+        self.genericos.truncate(genericos_prev);
         Ok(Some(Declaracion::Rasgo { nombre, metodos }))
     }
 
@@ -918,6 +959,12 @@ impl Parser {
         Ok(parametros)
     }
 
+    /// Registra los parámetros genéricos declarados en `<...>` para esta declaración.
+    fn abrir_genericos(&mut self, parametros: &[ParametroTipo]) {
+        self.genericos
+            .extend(parametros.iter().map(|p| p.nombre.clone()));
+    }
+
     /// Parsea parámetros de tipo genérico: <T, U, V>
     /// Retorna vacío si no hay <>
     fn parse_parametros_tipo(&mut self) -> Result<Vec<ParametroTipo>, ErrorForja> {
@@ -995,7 +1042,7 @@ impl Parser {
                 )?;
                 Some(self.parse_bloque()?)
             }
-        } else if self.coincide(TokenKind::O)
+        } else if self.coincide_operador_palabra("o")
             && self.peek_siguiente().map(|t| &t.kind) == Some(&TokenKind::Si)
         {
             self.avanzar(); // consume 'o'
@@ -1048,7 +1095,7 @@ impl Parser {
                 )?;
                 Some(self.parse_bloque()?)
             }
-        } else if self.coincide(TokenKind::O)
+        } else if self.coincide_operador_palabra("o")
             && self.peek_siguiente().map(|t| &t.kind) == Some(&TokenKind::Si)
         {
             self.avanzar(); // consume 'o'
@@ -1178,8 +1225,21 @@ impl Parser {
             let (linea, columna) = (self.linea_actual(), self.columna_actual());
             let nombre = self
                 .esperar_identificador("Se esperaba una variable en el incremento del 'para'.")?;
-            self.esperar(TokenKind::Igual, "Se esperaba '=' en el incremento.")?;
-            let valor = self.parse_expresion()?;
+            let valor = if let Some(operador) = self.tomar_operador_compuesto() {
+                let derecha = self.parse_expresion()?;
+                Expresion::Binaria {
+                    izquierda: Box::new(Expresion::Identificador {
+                        nombre: nombre.clone(),
+                        linea,
+                        columna,
+                    }),
+                    operador,
+                    derecha: Box::new(derecha),
+                }
+            } else {
+                self.esperar(TokenKind::Igual, "Se esperaba '=' en el incremento.")?;
+                self.parse_expresion()?
+            };
             Some(Box::new(Declaracion::Asignacion {
                 nombre,
                 valor: Box::new(valor),
@@ -1662,6 +1722,25 @@ impl Parser {
             }));
         }
 
+        // CASO 2b: nombre += expr  (asignación compuesta)
+        if let Some(operador) = self.tomar_operador_compuesto() {
+            let derecha = self.parse_expresion()?;
+            return Ok(Some(Declaracion::Asignacion {
+                nombre: nombre.clone(),
+                valor: Box::new(Expresion::Binaria {
+                    izquierda: Box::new(Expresion::Identificador {
+                        nombre,
+                        linea,
+                        columna,
+                    }),
+                    operador,
+                    derecha: Box::new(derecha),
+                }),
+                linea,
+                columna,
+            }));
+        }
+
         // CASO 3: nombre[índice] o nombre[índice] = expr (acceso/asignación por índice)
         if self.coincide(TokenKind::CorcheteAbrir) {
             self.avanzar(); // consume [
@@ -1682,6 +1761,25 @@ impl Parser {
                     linea,
                     columna,
                 }));
+            }
+
+            // nombre[índice] += valor
+            if let Some(operador) = self.tomar_operador_compuesto() {
+                let valor = self.parse_expresion()?;
+                return Ok(Some(Declaracion::Expresion(
+                    Expresion::AsignacionCompuesta {
+                        objetivo: Box::new(Expresion::Index {
+                            objeto: Box::new(Expresion::Identificador {
+                                nombre,
+                                linea,
+                                columna,
+                            }),
+                            indice: Box::new(indice),
+                        }),
+                        operador,
+                        valor: Box::new(valor),
+                    },
+                )));
             }
 
             // nombre[índice][índice2]... o cadenas con . y ()
@@ -1710,7 +1808,7 @@ impl Parser {
                         objeto: Box::new(expr),
                         indice: Box::new(indice2),
                     };
-                    // F12-T3: `m[i][j] = valor`. Los arreglos son referencias,
+                    // `m[i][j] = valor`. Los arreglos son referencias,
                     // así que se escribe en el arreglo interno: `ArraySet` sobre
                     // el `Index` exterior. Antes la asignación se descartaba en
                     // silencio (las matrices 2D de los ejemplos no se llenaban).
@@ -1721,6 +1819,17 @@ impl Parser {
                             array: Box::new(expr),
                             valor: Box::new(valor),
                         })));
+                    }
+                    // m[i][j] += valor (el objetivo encadenado se evalúa una vez)
+                    if let Some(operador) = self.tomar_operador_compuesto() {
+                        let valor = self.parse_expresion()?;
+                        return Ok(Some(Declaracion::Expresion(
+                            Expresion::AsignacionCompuesta {
+                                objetivo: Box::new(expr),
+                                operador,
+                                valor: Box::new(valor),
+                            },
+                        )));
                     }
                     continue;
                 }
@@ -1788,6 +1897,25 @@ impl Parser {
                 })));
             }
 
+            // nombre.miembro += valor (asignación compuesta a campo)
+            if let Some(operador) = self.tomar_operador_compuesto() {
+                let valor = self.parse_expresion()?;
+                return Ok(Some(Declaracion::Expresion(
+                    Expresion::AsignacionCompuesta {
+                        objetivo: Box::new(Expresion::AccesoMiembro {
+                            objeto: Box::new(Expresion::Identificador {
+                                nombre: nombre_clon,
+                                linea,
+                                columna,
+                            }),
+                            miembro,
+                        }),
+                        operador,
+                        valor: Box::new(valor),
+                    },
+                )));
+            }
+
             // nombre.miembro(args) - llamada a método
             if self.coincide(TokenKind::ParenAbrir) {
                 self.avanzar();
@@ -1811,6 +1939,28 @@ impl Parser {
                     TokenKind::CorcheteCerrar,
                     "Se esperaba ']' después del índice.",
                 )?;
+
+                // nombre.miembro[índice] += valor
+                if let Some(operador) = self.tomar_operador_compuesto() {
+                    let valor = self.parse_expresion()?;
+                    return Ok(Some(Declaracion::Expresion(
+                        Expresion::AsignacionCompuesta {
+                            objetivo: Box::new(Expresion::Index {
+                                objeto: Box::new(Expresion::AccesoMiembro {
+                                    objeto: Box::new(Expresion::Identificador {
+                                        nombre: nombre.clone(),
+                                        linea,
+                                        columna,
+                                    }),
+                                    miembro: miembro.clone(),
+                                }),
+                                indice: Box::new(indice),
+                            }),
+                            operador,
+                            valor: Box::new(valor),
+                        },
+                    )));
+                }
 
                 // nombre.miembro[índice] = valor
                 if self.coincide(TokenKind::Igual) {
@@ -1867,6 +2017,24 @@ impl Parser {
                                 array: Box::new(full_index),
                                 valor: Box::new(valor),
                             })));
+                        }
+                        // nombre.miembro[i][j] += valor
+                        if let Some(operador) = self.tomar_operador_compuesto() {
+                            let valor = self.parse_expresion()?;
+                            let full_index = Expresion::Index {
+                                objeto: Box::new(Expresion::Index {
+                                    objeto: Box::new(expr),
+                                    indice: Box::new(indice),
+                                }),
+                                indice: Box::new(indice2),
+                            };
+                            return Ok(Some(Declaracion::Expresion(
+                                Expresion::AsignacionCompuesta {
+                                    objetivo: Box::new(full_index),
+                                    operador,
+                                    valor: Box::new(valor),
+                                },
+                            )));
                         }
                         expr = Expresion::Index {
                             objeto: Box::new(expr),
@@ -1967,39 +2135,40 @@ impl Parser {
         self.parse_expresion_asignacion()
     }
 
+    /// Consume un operador de asignación compuesta y devuelve el operador
+    /// aritmético equivalente (`+=` → `+`, etc.). Si no hay, no consume nada.
+    fn tomar_operador_compuesto(&mut self) -> Option<Operador> {
+        let operador = match self.peek().kind {
+            TokenKind::MasIgual => Operador::Suma,
+            TokenKind::MenosIgual => Operador::Resta,
+            TokenKind::PorIgual => Operador::Multiplicacion,
+            TokenKind::DivididoIgual => Operador::Division,
+            TokenKind::PorcentajeIgual => Operador::Modulo,
+            _ => return None,
+        };
+        self.avanzar();
+        Some(operador)
+    }
+
     /// Asignación como expresión (precedencia más baja): x = 5, a = b = 3
-    /// La asignación es asociativa a la derecha.
+    /// La asignación es asociativa a la derecha. También cubre `x += 1` y sus
+    /// variantes (nodo `AsignacionCompuesta`, para evaluar el objetivo una vez).
     fn parse_expresion_asignacion(&mut self) -> Result<Expresion, ErrorForja> {
         let expr = self.parse_expresion_ternario()?;
-        if self.coincide(TokenKind::Igual) {
-            match &expr {
-                Expresion::Identificador { .. } => {
-                    if let Expresion::Identificador { nombre, .. } = expr {
-                        self.avanzar(); // consumir =
-                        let valor = self.parse_expresion_asignacion()?; // asociativo a la derecha
-                        return Ok(Expresion::Asignacion {
-                            variable: nombre,
-                            valor: Box::new(valor),
-                        });
-                    }
-                }
-                Expresion::AccesoMiembro { .. } => {
-                    if let Expresion::AccesoMiembro { objeto, miembro } = expr {
-                        self.avanzar(); // consumir =
-                        let valor = self.parse_expresion_asignacion()?; // asociativo a la derecha
-                        return Ok(Expresion::AsignacionCampo {
-                            objeto,
-                            campo: miembro,
-                            valor: Box::new(valor),
-                        });
-                    }
-                }
-                Expresion::Index { .. } => {
-                    // arr[i] = valor
-                    self.avanzar();
-                    let valor = self.parse_expresion_asignacion()?;
-                    return Ok(Expresion::ArraySet {
-                        array: Box::new(expr),
+        let compuesto = self.tomar_operador_compuesto();
+        if compuesto.is_none() && !self.coincide(TokenKind::Igual) {
+            return Ok(expr);
+        }
+        let valor = if let Some(operador) = compuesto {
+            // El objetivo va tal cual: cada backend lo evalúa una sola vez.
+            let valor = self.parse_expresion_asignacion()?;
+            match expr {
+                Expresion::Identificador { .. }
+                | Expresion::AccesoMiembro { .. }
+                | Expresion::Index { .. } => {
+                    return Ok(Expresion::AsignacionCompuesta {
+                        objetivo: Box::new(expr),
+                        operador,
                         valor: Box::new(valor),
                     });
                 }
@@ -2009,13 +2178,41 @@ impl Parser {
                         self.linea_actual(),
                         self.columna_actual(),
                         Span::punto(self.columna_actual()),
-                        &format!("Expresión inesperada: {} = ...", self.peek().kind),
+                        &format!(
+                            "Expresión inesperada en asignación compuesta: {} ...",
+                            self.peek().kind
+                        ),
                         "Solo se puede asignar a una variable, campo o índice (arr[i]).",
                     ));
                 }
             }
+        } else {
+            self.avanzar(); // consumir =
+            self.parse_expresion_asignacion()? // asociativo a la derecha
+        };
+        match expr {
+            Expresion::Identificador { nombre, .. } => Ok(Expresion::Asignacion {
+                variable: nombre,
+                valor: Box::new(valor),
+            }),
+            Expresion::AccesoMiembro { objeto, miembro } => Ok(Expresion::AsignacionCampo {
+                objeto,
+                campo: miembro,
+                valor: Box::new(valor),
+            }),
+            Expresion::Index { .. } => Ok(Expresion::ArraySet {
+                array: Box::new(expr),
+                valor: Box::new(valor),
+            }),
+            _ => Err(ErrorForja::con_codigo(
+                ErrorTipo::ErrorSintactico,
+                self.linea_actual(),
+                self.columna_actual(),
+                Span::punto(self.columna_actual()),
+                &format!("Expresión inesperada: {} = ...", self.peek().kind),
+                "Solo se puede asignar a una variable, campo o índice (arr[i]).",
+            )),
         }
-        Ok(expr)
     }
 
     /// Expresiones ternarias: cond ? verdadero : falso
@@ -2039,10 +2236,21 @@ impl Parser {
         }
     }
 
+    /// `y`/`o` son operadores **contextuales**: el lexer los emite como
+    /// identificadores para que sigan sirviendo como nombre de variable
+    /// (`variable y = 2`). Solo cuentan como operador si están en la misma
+    /// línea que el operando anterior: así `x = 5` seguido de una línea
+    /// `y = 10` no se confunde con un `y` lógico.
+    fn coincide_operador_palabra(&self, palabra: &str) -> bool {
+        matches!(&self.peek().kind, TokenKind::Identificador(n) if n == palabra)
+            && self.pos > 0
+            && self.tokens[self.pos - 1].linea == self.peek().linea
+    }
+
     /// Expresiones lógicas: || (O)
     fn parse_expresion_logica(&mut self) -> Result<Expresion, ErrorForja> {
         let mut expr = self.parse_expresion_y()?;
-        while self.coincide(TokenKind::O) {
+        while self.coincide(TokenKind::O) || self.coincide_operador_palabra("o") {
             let operador = Operador::O;
             self.avanzar();
             let derecha = self.parse_expresion_y()?;
@@ -2058,7 +2266,7 @@ impl Parser {
     /// Expresiones lógicas: && (Y)
     fn parse_expresion_y(&mut self) -> Result<Expresion, ErrorForja> {
         let mut expr = self.parse_expresion_igualdad()?;
-        while self.coincide(TokenKind::Y) {
+        while self.coincide(TokenKind::Y) || self.coincide_operador_palabra("y") {
             let operador = Operador::Y;
             self.avanzar();
             let derecha = self.parse_expresion_igualdad()?;
@@ -2911,10 +3119,14 @@ impl Parser {
             });
         }
 
-        self.esperar(
-            TokenKind::ParenAbrir,
-            "Se esperaba '(' o '{' después del nombre de la clase.",
-        )?;
+        // `nuevo Auto` sin paréntesis = constructor sin argumentos.
+        if !self.coincide(TokenKind::ParenAbrir) {
+            return Ok(Expresion::Instanciacion {
+                clase,
+                argumentos: Vec::new(),
+            });
+        }
+        self.avanzar(); // consume '('
         let argumentos = self.parse_argumentos()?;
         self.esperar(
             TokenKind::ParenCerrar,
@@ -2957,18 +3169,20 @@ impl Parser {
 
         if !self.coincide(TokenKind::LlaveCerrar) {
             loop {
-                // Soporte para {clave = valor} (estilo Lua)
-                // Detectamos si es Identificador seguido de '='
-                let es_lua_style = matches!(self.peek().kind, TokenKind::Identificador(_)) && {
-                    let saved = self.pos;
-                    self.avanzar();
-                    let es_igual = self.coincide(TokenKind::Igual);
-                    self.pos = saved; // restaurar
-                    es_igual
-                };
+                // {clave = valor} (estilo Lua) o {clave: valor}: si el primer
+                // token es un identificador y lo sigue '=' o ':', la clave es
+                // el texto de ese identificador.
+                let clave_sin_comillas = matches!(self.peek().kind, TokenKind::Identificador(_))
+                    && {
+                        let saved = self.pos;
+                        self.avanzar();
+                        let es_separador =
+                            self.coincide(TokenKind::Igual) || self.coincide(TokenKind::DosPuntos);
+                        self.pos = saved; // restaurar
+                        es_separador
+                    };
 
-                if es_lua_style {
-                    // {clave = valor} — clave se convierte a string
+                if clave_sin_comillas {
                     self.avanzar(); // consumir identificador
                     let nombre =
                         if let TokenKind::Identificador(n) = &self.tokens[self.pos - 1].kind {
@@ -2976,7 +3190,7 @@ impl Parser {
                         } else {
                             String::new()
                         };
-                    self.avanzar(); // consumir '='
+                    self.avanzar(); // consumir '=' o ':'
                     let valor = self.parse_expresion()?;
                     pares.push((Expresion::LiteralTexto(nombre), valor));
                 } else {
@@ -3064,13 +3278,9 @@ impl Parser {
                 let nombre = s.clone();
                 self.avanzar();
 
-                // Verificar si es un parámetro de tipo genérico (una letra mayúscula: T, U, V, E, K)
-                let es_parametro_tipo = nombre.len() == 1
-                    && nombre
-                        .chars()
-                        .next()
-                        .map(|c| c.is_ascii_uppercase())
-                        .unwrap_or(false);
+                // Genérico sólo si fue declarado en un `<...>` en ámbito. Nunca por
+                // la forma del nombre: `tipo F =...` es un tipo real.
+                let es_parametro_tipo = self.genericos.iter().any(|g| g == &nombre);
 
                 // Verificar si sigue < para tipos genéricos: Nombre<T> o Nombre<T, E>
                 if self.coincide(TokenKind::Menor) {
@@ -3360,7 +3570,17 @@ impl Parser {
                 | TokenKind::Menos
                 | TokenKind::Amp
                 | TokenKind::Tipo
-        )
+                // `resultado` y `anterior(...)` empiezan una expresión: sin
+                // esto, `retornar resultado` se partía en `retornar` + una
+                // sentencia aparte y la función devolvía nulo.
+                | TokenKind::ResultadoKw
+                | TokenKind::Anterior
+        ) || (self.coincide(TokenKind::Funcion)
+            // `func(x) { … }` (closure literal) empieza una expresión; una
+            // declaración `funcion nombre(` no.
+            && self
+                .peek_siguiente()
+                .is_some_and(|t| t.kind == TokenKind::ParenAbrir))
     }
 
     // ============================================================
@@ -3412,6 +3632,25 @@ impl Parser {
             self.avanzar(); // consume 'caso'
 
             let patrones = self.parse_patrones_con_pipe()?;
+
+            // `caso Patron si (cond)` — guarda: no soportada todavía.
+            // Se rechaza con un mensaje claro en vez de dejar que el `si` se
+            // confunda con el cuerpo del brazo y el patrón pierda su binding.
+            // El error se registra acá además de devolverse: la recuperación de
+            // `parse_declaracion` descarta los errores de un reintento, y sin
+            // esto el usuario veía un error del checker en vez de este.
+            if self.coincide(TokenKind::Si) {
+                let error = ErrorForja::con_codigo(
+                    ErrorTipo::ErrorSintactico,
+                    self.linea_actual(),
+                    self.columna_actual(),
+                    Span::punto(self.columna_actual()),
+                    "Las guardas en patrones todavía no están soportadas.",
+                    "Poné la condición dentro del cuerpo del caso: caso Circulo(r) -> { si !(r > 0) { ... } }",
+                );
+                self.errores.push(error.clone());
+                return Err(error);
+            }
 
             // Opcionalmente consumir -> (sintaxis existente: caso Patron -> { ... })
             if self.coincide(TokenKind::Menos) {
@@ -3524,13 +3763,19 @@ impl Parser {
                         TokenKind::ParenCerrar,
                         "Se esperaba ')' después de los subpatrones del constructor.",
                     )?;
-                    Ok(Patron::Constructor(nombre, subpatrones))
+                    Ok(Patron::Constructor(
+                        normalizar_constructor_patron(nombre),
+                        subpatrones,
+                    ))
                 } else {
                     // Distinguir entre variable y constructor según la primera letra:
                     // - Minúscula o empieza con _ → Variable (bindea el valor)
                     // - Mayúscula → Constructor (variante de enum sin datos)
                     if nombre.starts_with(char::is_uppercase) {
-                        Ok(Patron::Constructor(nombre, vec![]))
+                        Ok(Patron::Constructor(
+                            normalizar_constructor_patron(nombre),
+                            vec![],
+                        ))
                     } else {
                         Ok(Patron::Variable(nombre))
                     }
@@ -3689,6 +3934,79 @@ mod tests {
                 assert!(matches!(**valor, Expresion::LiteralTexto(_)));
             }
             otra => panic!("se esperaba Declaracion::Asignacion, llegó: {otra:?}"),
+        }
+    }
+
+    #[test]
+    fn test_tipo_de_una_letra_no_es_generico() {
+        // `tipo F =...` declaraba el tipo, pero `f: F` se parseaba como
+        // parámetro genérico y la exhaustividad no veía el enum.
+        let prog =
+            parse_source("tipo F = A | B\nfuncion usar(f: F) -> Entero { retornar 1 }").unwrap();
+        match &prog.declaraciones[1] {
+            Declaracion::Funcion { parametros, .. } => {
+                assert!(
+                    matches!(parametros[0].tipo, Some(Tipo::Clase(ref n)) if n == "F"),
+                    "se esperaba Clase(\"F\"), llegó: {:?}",
+                    parametros[0].tipo
+                );
+            }
+            otra => panic!("se esperaba una función, llegó: {otra:?}"),
+        }
+        // Pero un genérico declarado en <...> sigue siendo Parametro.
+        let prog = parse_source("funcion id<T>(x: T) -> T { retornar x }").unwrap();
+        match &prog.declaraciones[0] {
+            Declaracion::Funcion {
+                parametros,
+                tipo_retorno,
+                ..
+            } => {
+                assert!(matches!(parametros[0].tipo, Some(Tipo::Parametro(ref n)) if n == "T"));
+                assert!(matches!(tipo_retorno, Some(Tipo::Parametro(ref n)) if n == "T"));
+            }
+            otra => panic!("se esperaba una función, llegó: {otra:?}"),
+        }
+        // `T` sin declarar en `<...>` tampoco es genérico por convención: es un tipo.
+        let prog = parse_source("funcion usar(x: T) -> T { retornar x }").unwrap();
+        match &prog.declaraciones[0] {
+            Declaracion::Funcion {
+                parametros,
+                tipo_retorno,
+                ..
+            } => {
+                assert!(matches!(parametros[0].tipo, Some(Tipo::Clase(ref n)) if n == "T"));
+                assert!(matches!(tipo_retorno, Some(Tipo::Clase(ref n)) if n == "T"));
+            }
+            otra => panic!("se esperaba una función, llegó: {otra:?}"),
+        }
+        // El ámbito genérico no se filtra fuera de la declaración que lo abrió.
+        let prog = parse_source("funcion f<T>(x: T) { }\nfuncion g(y: T) { }").unwrap();
+        match &prog.declaraciones[1] {
+            Declaracion::Funcion { parametros, .. } => {
+                assert!(matches!(parametros[0].tipo, Some(Tipo::Clase(ref n)) if n == "T"));
+            }
+            otra => panic!("se esperaba una función, llegó: {otra:?}"),
+        }
+        // Y sí alcanza a los métodos del cuerpo de la clase y a las firmas del rasgo.
+        let prog = parse_source("clase C<T> { funcion m(x: T) -> T { retornar x } }").unwrap();
+        match &prog.declaraciones[0] {
+            Declaracion::Clase { metodos, .. } => {
+                assert!(matches!(
+                    metodos[0].parametros[0].tipo,
+                    Some(Tipo::Parametro(ref n)) if n == "T"
+                ));
+            }
+            otra => panic!("se esperaba una clase, llegó: {otra:?}"),
+        }
+        let prog = parse_source("rasgo R<T> { funcion f(x: T) -> T }").unwrap();
+        match &prog.declaraciones[0] {
+            Declaracion::Rasgo { metodos, .. } => {
+                assert!(matches!(
+                    metodos[0].parametros[0].tipo,
+                    Some(Tipo::Parametro(ref n)) if n == "T"
+                ));
+            }
+            otra => panic!("se esperaba un rasgo, llegó: {otra:?}"),
         }
     }
 
@@ -3965,7 +4283,7 @@ mod tests {
 
     #[test]
     fn test_parse_comas_finales() {
-        // Test trailing commas in function calls, arguments, tuples, arrays, maps, and parameters.
+        // Test trailing commas in function calls, arguments, tuples, arrays, maps, and parameters. in function calls, arguments, tuples, arrays, maps, and parameters.
         let sources = vec![
             "funcion f(a: Entero, b: Texto,) { retornar (a, b,) }",
             "variable x = f(1, \"hola\",)",
@@ -3980,5 +4298,35 @@ mod tests {
                 src
             );
         }
+    }
+
+    /// una guarda `caso P si (cond)` se rechaza con un mensaje claro
+    /// (Gramática) y ese error no se pierde por la recuperación del parser.
+    #[test]
+    fn test_guarda_en_patron_se_rechaza_con_mensaje_claro() {
+        let fuente = "funcion a() { coincidir (1) { caso 1 si (2 > 0) -> { retornar 1 } } }";
+        let errs = match parse_source(fuente) {
+            Ok(_) => panic!("la guarda debe diagnosticarse"),
+            Err(errs) => errs,
+        };
+        assert!(
+            format!("{}", errs[0]).contains("guardas en patrones"),
+            "primer error inesperado: {}",
+            errs[0]
+        );
+    }
+}
+
+/// Nombre canónico de una variante usada en un patrón.
+///
+/// `Opcion<T>` se declara en el prelude como `Alguno(T) | Ninguno`, pero los
+/// ejemplos usan `Algo(...)` / `Nada()`: sin normalizar, `caso Algo(v)` no
+/// matcheaba en runtime (devolvía Nulo) y el chequeo de exhaustividad lo veía
+/// como una variante distinta.
+fn normalizar_constructor_patron(nombre: String) -> String {
+    match nombre.as_str() {
+        "Algo" | "Some" => "Alguno".to_string(),
+        "Nada" | "None" => "Ninguno".to_string(),
+        _ => nombre,
     }
 }

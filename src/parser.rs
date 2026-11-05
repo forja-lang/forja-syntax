@@ -227,6 +227,19 @@ impl Parser {
                 ) {
                     return self.parse_statement_expresion();
                 }
+                // Si el token arranca una sentencia que el lenguaje reconoce
+                // (llamada, asignación, `escribir`, `este`, `nuevo`), su error
+                // se propaga. Recuperar en silencio generaba programas vacíos
+                // sin diagnóstico: `escribir(hola(` no hacía nada ni avisaba.
+                if matches!(
+                    self.peek().kind,
+                    TokenKind::Identificador(_)
+                        | TokenKind::Escribir
+                        | TokenKind::Este
+                        | TokenKind::Nuevo
+                ) {
+                    return self.parse_statement_expresion();
+                }
                 // Token inesperado: intentar como expresión; si falla, saltar y reintentar
                 match self.parse_statement_expresion() {
                     Ok(r) => Ok(r),

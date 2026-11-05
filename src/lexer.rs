@@ -149,7 +149,9 @@ impl Lexer {
             "mut" => TokenKind::Mut,
             "si" => TokenKind::Si,
             "sino" => TokenKind::Sino,
-            "o" => TokenKind::O,
+            // `y`/`o` NO son keywords: el parser los reconoce como operador
+            // lógico solo en posición de operador, así siguen sirviendo como
+            // nombre de variable (`variable y = 2`).
             "mientras" => TokenKind::Mientras,
             "para" => TokenKind::Para,
             "repetir" => TokenKind::Repetir,
@@ -679,43 +681,58 @@ impl Lexer {
                 }
                 Some('+') => {
                     self.advance();
-                    self.tokens_pendientes.push(Token::new(
-                        TokenKind::Mas,
-                        self.linea,
-                        self.columna,
-                    ));
+                    let kind = if self.current() == Some('=') {
+                        self.advance();
+                        TokenKind::MasIgual
+                    } else {
+                        TokenKind::Mas
+                    };
+                    self.tokens_pendientes
+                        .push(Token::new(kind, self.linea, self.columna));
                 }
                 Some('-') => {
                     self.advance();
-                    self.tokens_pendientes.push(Token::new(
-                        TokenKind::Menos,
-                        self.linea,
-                        self.columna,
-                    ));
+                    let kind = if self.current() == Some('=') {
+                        self.advance();
+                        TokenKind::MenosIgual
+                    } else {
+                        TokenKind::Menos
+                    };
+                    self.tokens_pendientes
+                        .push(Token::new(kind, self.linea, self.columna));
                 }
                 Some('*') => {
                     self.advance();
-                    self.tokens_pendientes.push(Token::new(
-                        TokenKind::Por,
-                        self.linea,
-                        self.columna,
-                    ));
+                    let kind = if self.current() == Some('=') {
+                        self.advance();
+                        TokenKind::PorIgual
+                    } else {
+                        TokenKind::Por
+                    };
+                    self.tokens_pendientes
+                        .push(Token::new(kind, self.linea, self.columna));
                 }
                 Some('%') => {
                     self.advance();
-                    self.tokens_pendientes.push(Token::new(
-                        TokenKind::Porcentaje,
-                        self.linea,
-                        self.columna,
-                    ));
+                    let kind = if self.current() == Some('=') {
+                        self.advance();
+                        TokenKind::PorcentajeIgual
+                    } else {
+                        TokenKind::Porcentaje
+                    };
+                    self.tokens_pendientes
+                        .push(Token::new(kind, self.linea, self.columna));
                 }
                 Some('/') => {
                     self.advance();
-                    self.tokens_pendientes.push(Token::new(
-                        TokenKind::Dividido,
-                        self.linea,
-                        self.columna,
-                    ));
+                    let kind = if self.current() == Some('=') {
+                        self.advance();
+                        TokenKind::DivididoIgual
+                    } else {
+                        TokenKind::Dividido
+                    };
+                    self.tokens_pendientes
+                        .push(Token::new(kind, self.linea, self.columna));
                 }
                 Some('.') => {
                     self.advance();
@@ -1013,22 +1030,42 @@ impl Lexer {
             // & (referencia)
             '&' => self.leer_ampersand(),
 
-            // Operadores aritméticos
+            // Operadores aritméticos (y su forma de asignación compuesta)
             '+' => {
                 self.advance();
-                TokenKind::Mas
+                if self.current() == Some('=') {
+                    self.advance();
+                    TokenKind::MasIgual
+                } else {
+                    TokenKind::Mas
+                }
             }
             '-' => {
                 self.advance();
-                TokenKind::Menos
+                if self.current() == Some('=') {
+                    self.advance();
+                    TokenKind::MenosIgual
+                } else {
+                    TokenKind::Menos
+                }
             }
             '*' => {
                 self.advance();
-                TokenKind::Por
+                if self.current() == Some('=') {
+                    self.advance();
+                    TokenKind::PorIgual
+                } else {
+                    TokenKind::Por
+                }
             }
             '%' => {
                 self.advance();
-                TokenKind::Porcentaje
+                if self.current() == Some('=') {
+                    self.advance();
+                    TokenKind::PorcentajeIgual
+                } else {
+                    TokenKind::Porcentaje
+                }
             }
             '/' => {
                 // Detectar doc comment: ///
@@ -1056,7 +1093,12 @@ impl Lexer {
                 // Si es // es comentario, pero skip_comentarios ya lo maneja
                 // Aquí llegamos si es un / como operador
                 self.advance();
-                TokenKind::Dividido
+                if self.current() == Some('=') {
+                    self.advance();
+                    TokenKind::DivididoIgual
+                } else {
+                    TokenKind::Dividido
+                }
             }
 
             // Operadores relacionales y lógicos
@@ -1571,7 +1613,7 @@ pub struct Comentario {
 /// Extrae los comentarios (`//`, `///` y `/* */`) del fuente, ignorando los
 /// marcadores que aparecen dentro de strings o literales de carácter.
 ///
-/// Es la base de F5-T2: el formatter reconstruye desde el AST (que no conserva
+/// Es la base de el formatter reconstruye desde el AST (que no conserva
 /// comentarios), así que se reinsertan por línea del token siguiente.
 pub fn extraer_comentarios(source: &str) -> Vec<Comentario> {
     struct Crudo {

@@ -280,14 +280,6 @@ pub enum Expresion {
         array: Box<Expresion>,
         valor: Box<Expresion>,
     },
-    /// Asignación compuesta (`x += 1`, `arr[i] *= 2`, `obj.campo -= 1`).
-    /// El objetivo (incluido el índice o el objeto) se evalúa una sola vez.
-    /// Retorna el valor nuevo.
-    AsignacionCompuesta {
-        objetivo: Box<Expresion>,
-        operador: Operador,
-        valor: Box<Expresion>,
-    },
     /// Construir valor Ok de Resultado (ej: Ok(42))
     Ok(Box<Expresion>),
     /// Construir valor Error de Resultado (ej: Error("falló"))

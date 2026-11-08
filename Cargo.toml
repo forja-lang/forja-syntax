@@ -1,6 +1,6 @@
 [package]
 name = "forja-syntax"
-version = "0.9.7"
+version = "0.10.0"
 edition = "2021"
 description = "Frontend de Forja (fa): tokens, AST, lexer, parser y diagnósticos reutilizables"
 authors = ["forja-lang"]
@@ -13,4 +13,6 @@ keywords = ["forja", "compiler", "lexer", "parser", "ast"]
 categories = ["compilers", "development-tools"]
 
 [dependencies]
+forja-errors = { path = "../forja-errors" }
+forja-span = { path = "../forja-span" }
 serde = { version = "1", features = ["derive"] }

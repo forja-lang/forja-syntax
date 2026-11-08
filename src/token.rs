@@ -338,6 +338,8 @@ pub struct Token {
     pub kind: TokenKind,
     pub linea: usize,
     pub columna: usize,
+    /// Rango de bytes en el archivo (se completa en `Lexer::tokenize`).
+    pub span: Option<forja_span::Span>,
 }
 
 impl Token {
@@ -346,6 +348,7 @@ impl Token {
             kind,
             linea,
             columna,
+            span: None,
         }
     }
 }

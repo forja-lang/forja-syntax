@@ -43,13 +43,28 @@ impl Lexer {
             self.skip_whitespace();
             self.skip_comentarios();
 
-            if self.pos >= self.source.len() {
+            // Los tokens pendientes de una interpolación (${...}) se encolan
+            // aunque el fuente ya haya llegado al final; drenarlos antes del EOF.
+            if self.pos >= self.source.len() && self.tokens_pendientes.is_empty() {
                 tokens.push(Token::new(TokenKind::EOF, self.linea, self.columna));
                 break;
             }
 
+            let inicio = self.pos;
+            let pendientes_antes = self.tokens_pendientes.len();
             match self.next_token() {
-                Ok(Some(token)) => tokens.push(token),
+                Ok(Some(mut token)) => {
+                    // Los tokens encolados por interpolación ya no están en
+                    // `pos`; solo se marca el span del token escaneado ahora.
+                    if token.span.is_none() && pendientes_antes == 0 {
+                        token.span = Some(forja_span::Span::nuevo(
+                            forja_span::FileId::default(),
+                            inicio,
+                            self.pos,
+                        ));
+                    }
+                    tokens.push(token);
+                }
                 Ok(None) => break,
                 Err(err) => errors.push(err),
             }
@@ -931,19 +946,17 @@ impl Lexer {
                                 break;
                             }
                         }
-                        if self.string_buf.as_str() == "este" {
-                            self.tokens_pendientes.push(Token::new(
-                                TokenKind::Este,
-                                self.linea,
-                                self.columna,
-                            ));
-                        } else {
-                            self.tokens_pendientes.push(Token::new(
-                                TokenKind::Identificador(self.string_buf.clone()),
-                                self.linea,
-                                self.columna,
-                            ));
-                        }
+                        // Los literales booleanos/nulo conservan su token: como
+                        // identificadores caían en "variable no declarada".
+                        let kind = match self.string_buf.as_str() {
+                            "este" => TokenKind::Este,
+                            "verdadero" => TokenKind::Verdadero,
+                            "falso" => TokenKind::Falso,
+                            "nulo" => TokenKind::Nulo,
+                            _ => TokenKind::Identificador(self.string_buf.clone()),
+                        };
+                        self.tokens_pendientes
+                            .push(Token::new(kind, self.linea, self.columna));
                     } else {
                         // Carácter desconocido, avanzar
                         return Err(ErrorForja::con_codigo(

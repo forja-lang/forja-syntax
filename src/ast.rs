@@ -1,3 +1,4 @@
+use forja_span::Span;
 use serde::{Deserialize, Serialize};
 // Definiciones del Árbol de Sintaxis Abstracta (AST) para Forja (fa)
 
@@ -49,7 +50,7 @@ pub enum Tipo {
     Funcion(Vec<Tipo>, Box<Tipo>), // (tipos_parametros, tipo_retorno)
     /// Resultado con Ok/Error (Result<T, E>)
     Resultado(Box<Tipo>, Box<Tipo>),
-    /// Valor opcional (Option<T>)
+    /// Valor opcional (`Option<T>`)
     Opcion(Box<Tipo>),
     /// Un rasgo usado como tipo (polimorfismo)
     RasgoObjeto(String),
@@ -459,4 +460,16 @@ impl Declaracion {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Programa {
     pub declaraciones: Vec<Declaracion>,
+    /// Rango de bytes del programa completo, si el parser lo conoce.
+    #[serde(skip)]
+    pub span: Option<Span>,
+    /// Spans por (línea, columna) de los tokens del programa.
+    #[serde(skip)]
+    pub spans: Vec<((usize, usize), Span)>,
+    /// Nombres internados del programa (AST conserva `String`, esta tabla evita
+    /// repetir la resolución de nombres en HIR/IR).
+    #[serde(skip)]
+    pub nombres: Vec<String>,
+    #[serde(skip)]
+    pub indice_nombres: std::collections::HashMap<String, u32>,
 }

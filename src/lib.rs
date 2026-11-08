@@ -11,10 +11,14 @@
 //! El crate `forja` reexporta estos módulos (`forja::ast`, `forja::lexer`, …)
 //! para preservar la API pública histórica.
 #![forbid(unsafe_code)]
+// `ErrorForja` es rico a propósito (código, mensaje, ayuda y dos spans). Boxearlo
+// en cada firma es una migración aparte; hasta entonces se permite el tamaño.
+#![allow(clippy::result_large_err)]
+#![allow(rustdoc::broken_intra_doc_links)]
 
 pub mod ast;
 pub mod booleanos;
-pub mod error;
+pub use forja_errors as error;
 pub mod lexer;
 pub mod parser;
 pub mod token;

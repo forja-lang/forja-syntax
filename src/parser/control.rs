@@ -3,9 +3,9 @@ use super::*;
 impl Parser {
     /// si (<cond>) { <bloque> } [ sino { <bloque> } ]
     /// si <cond> { <bloque> } [ sino si <cond> { <bloque> } ] [ sino { <bloque> } ]
-    pub(crate) fn parse_si(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_si(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
         self.avanzar(); // consume 'si'
-        self.parse_si_desde_condicion()
+        self.parsear_si_desde_condicion()
     }
 
     /// Parsea un `si`/`sino si` desde la condición (sin consumir 'si').
@@ -13,49 +13,49 @@ impl Parser {
     /// `si (cond) { … } sino { … }` como **expresión**: se usa como elemento de
     /// una lista de argumentos (`columna(a, si (x) { b } sino { c })`), donde lo
     /// que produce son elementos de UI y no un valor. El token actual es `si`.
-    pub(crate) fn parse_si_expresion(&mut self) -> Result<Expresion, ErrorForja> {
+    pub(crate) fn parsear_si_expresion(&mut self) -> Result<Expresion, ErrorForja> {
         self.avanzar(); // consume 'si'
-        self.parse_si_expresion_desde_condicion()
+        self.parsear_si_expresion_desde_condicion()
     }
 
-    /// Igual que [`Self::parse_si_expresion`] pero sin consumir el `si` inicial,
+    /// Igual que [`Self::parsear_si_expresion`] pero sin consumir el `si` inicial,
     /// para poder encadenar `sino si`.
-    pub(crate) fn parse_si_expresion_desde_condicion(&mut self) -> Result<Expresion, ErrorForja> {
+    pub(crate) fn parsear_si_expresion_desde_condicion(&mut self) -> Result<Expresion, ErrorForja> {
         let condicion = if self.coincide(TokenKind::ParenAbrir) {
             self.avanzar();
-            let cond = self.parse_expresion()?;
+            let cond = self.parsear_expresion()?;
             self.esperar(
                 TokenKind::ParenCerrar,
                 "Se esperaba ')' después de la condición.",
             )?;
             cond
         } else {
-            self.parse_expresion()?
+            self.parsear_expresion()?
         };
 
         self.esperar(
             TokenKind::LlaveAbrir,
             "Se esperaba '{' para el bloque del 'si'.",
         )?;
-        let bloque_verdadero = self.parse_bloque()?;
+        let bloque_verdadero = self.parsear_bloque()?;
 
         let bloque_falso = if self.coincide(TokenKind::Sino) {
             self.avanzar(); // consume 'sino'
             if self.coincide(TokenKind::Si) {
-                let anidado = self.parse_si_expresion()?;
+                let anidado = self.parsear_si_expresion()?;
                 Some(vec![Declaracion::Expresion(anidado)])
             } else {
                 self.esperar(
                     TokenKind::LlaveAbrir,
                     "Se esperaba '{' para el bloque del 'sino'.",
                 )?;
-                Some(self.parse_bloque()?)
+                Some(self.parsear_bloque()?)
             }
         } else if self.coincide_operador_palabra("o")
             && self.peek_siguiente().map(|t| &t.kind) == Some(&TokenKind::Si)
         {
             self.avanzar(); // consume 'o'
-            let anidado = self.parse_si_expresion()?;
+            let anidado = self.parsear_si_expresion()?;
             Some(vec![Declaracion::Expresion(anidado)])
         } else {
             None
@@ -68,11 +68,11 @@ impl Parser {
         })
     }
 
-    pub(crate) fn parse_si_desde_condicion(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_si_desde_condicion(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
         // Parse condition — puede llevar paréntesis o no
         let condicion = if self.coincide(TokenKind::ParenAbrir) {
             self.avanzar();
-            let cond = self.parse_expresion()?;
+            let cond = self.parsear_expresion()?;
             self.esperar(
                 TokenKind::ParenCerrar,
                 "Se esperaba ')' después de la condición.",
@@ -80,14 +80,14 @@ impl Parser {
             cond
         } else {
             // Sin paréntesis: la expresión termina donde aparece '{'
-            self.parse_expresion()?
+            self.parsear_expresion()?
         };
 
         self.esperar(
             TokenKind::LlaveAbrir,
             "Se esperaba '{' para el bloque del 'si'.",
         )?;
-        let bloque_verdadero = self.parse_bloque()?;
+        let bloque_verdadero = self.parsear_bloque()?;
 
         // Manejar sino / o si / sino si
         let bloque_falso = if self.coincide(TokenKind::Sino) {
@@ -95,21 +95,21 @@ impl Parser {
             if self.coincide(TokenKind::Si) {
                 // sino si → otro condicional anidado (else if)
                 self.avanzar(); // consume 'si'
-                let sino_si = self.parse_si_desde_condicion()?;
+                let sino_si = self.parsear_si_desde_condicion()?;
                 sino_si.map(|decl| vec![decl])
             } else {
                 self.esperar(
                     TokenKind::LlaveAbrir,
                     "Se esperaba '{' para el bloque del 'sino'.",
                 )?;
-                Some(self.parse_bloque()?)
+                Some(self.parsear_bloque()?)
             }
         } else if self.coincide_operador_palabra("o")
             && self.peek_siguiente().map(|t| &t.kind) == Some(&TokenKind::Si)
         {
             self.avanzar(); // consume 'o'
             self.avanzar(); // consume 'si'
-            let o_si = self.parse_si_desde_condicion()?;
+            let o_si = self.parsear_si_desde_condicion()?;
             o_si.map(|decl| vec![decl])
         } else {
             None
@@ -123,13 +123,13 @@ impl Parser {
     }
 
     /// mientras (<cond>) { <bloque> }
-    pub(crate) fn parse_mientras(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_mientras(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
         self.avanzar(); // consume 'mientras'
         self.esperar(
             TokenKind::ParenAbrir,
             "Se esperaba '(' después de 'mientras'.",
         )?;
-        let condicion = self.parse_expresion()?;
+        let condicion = self.parsear_expresion()?;
         self.esperar(
             TokenKind::ParenCerrar,
             "Se esperaba ')' después de la condición.",
@@ -138,7 +138,7 @@ impl Parser {
             TokenKind::LlaveAbrir,
             "Se esperaba '{' para el bloque del 'mientras'.",
         )?;
-        let bloque = self.parse_bloque()?;
+        let bloque = self.parsear_bloque()?;
 
         Ok(Some(Declaracion::Mientras {
             condicion: Box::new(condicion),
@@ -147,14 +147,14 @@ impl Parser {
     }
 
     /// cuando (<cond>) { <bloque> }
-    pub(crate) fn parse_cuando(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_cuando(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
         let (linea, columna) = (self.linea_actual(), self.columna_actual());
         self.avanzar(); // consume 'cuando'
         self.esperar(
             TokenKind::ParenAbrir,
             "Se esperaba '(' después de 'cuando'.",
         )?;
-        let condicion = self.parse_expresion()?;
+        let condicion = self.parsear_expresion()?;
         self.esperar(
             TokenKind::ParenCerrar,
             "Se esperaba ')' después de la condición.",
@@ -163,7 +163,7 @@ impl Parser {
             TokenKind::LlaveAbrir,
             "Se esperaba '{' para el bloque del 'cuando'.",
         )?;
-        let cuerpo = self.parse_bloque()?;
+        let cuerpo = self.parsear_bloque()?;
 
         Ok(Some(Declaracion::Cuando {
             condicion: Box::new(condicion),
@@ -174,7 +174,7 @@ impl Parser {
     }
 
     /// para (<inicio>; <cond>; <incr>) { <bloque> }
-    pub(crate) fn parse_para(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_para(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
         self.avanzar(); // consume 'para'
         self.esperar(TokenKind::ParenAbrir, "Se esperaba '(' después de 'para'.")?;
 
@@ -182,7 +182,7 @@ impl Parser {
         let inicializacion = if self.coincide(TokenKind::PuntoComa) {
             None
         } else if self.coincide(TokenKind::Variable) {
-            let decl = self.parse_variable_decl()?.unwrap();
+            let decl = self.parsear_declaracion_variable()?.unwrap();
             Some(Box::new(decl))
         } else {
             let (linea, columna) = (self.linea_actual(), self.columna_actual());
@@ -191,7 +191,7 @@ impl Parser {
             )?;
             if self.coincide(TokenKind::Igual) {
                 self.avanzar();
-                let valor = self.parse_expresion()?;
+                let valor = self.parsear_expresion()?;
                 Some(Box::new(Declaracion::Asignacion {
                     nombre,
                     valor: Box::new(valor),
@@ -219,7 +219,7 @@ impl Parser {
         let condicion = if self.coincide(TokenKind::PuntoComa) {
             None
         } else {
-            Some(Box::new(self.parse_expresion()?))
+            Some(Box::new(self.parsear_expresion()?))
         };
 
         self.esperar(
@@ -235,7 +235,7 @@ impl Parser {
             let nombre = self
                 .esperar_identificador("Se esperaba una variable en el incremento del 'para'.")?;
             let valor = if let Some(operador) = self.tomar_operador_compuesto() {
-                let derecha = self.parse_expresion()?;
+                let derecha = self.parsear_expresion()?;
                 Expresion::Binaria {
                     izquierda: Box::new(Expresion::Identificador {
                         nombre: nombre.clone(),
@@ -247,7 +247,7 @@ impl Parser {
                 }
             } else {
                 self.esperar(TokenKind::Igual, "Se esperaba '=' en el incremento.")?;
-                self.parse_expresion()?
+                self.parsear_expresion()?
             };
             Some(Box::new(Declaracion::Asignacion {
                 nombre,
@@ -265,7 +265,7 @@ impl Parser {
             TokenKind::LlaveAbrir,
             "Se esperaba '{' para el bloque del 'para'.",
         )?;
-        let bloque = self.parse_bloque()?;
+        let bloque = self.parsear_bloque()?;
 
         Ok(Some(Declaracion::Para {
             inicializacion,
@@ -276,13 +276,13 @@ impl Parser {
     }
 
     /// repetir (<cantidad>) { <bloque> }
-    pub(crate) fn parse_repetir(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_repetir(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
         self.avanzar(); // consume 'repetir'
         self.esperar(
             TokenKind::ParenAbrir,
             "Se esperaba '(' después de 'repetir'.",
         )?;
-        let cantidad = self.parse_expresion()?;
+        let cantidad = self.parsear_expresion()?;
         self.esperar(
             TokenKind::ParenCerrar,
             "Se esperaba ')' después de la cantidad.",
@@ -291,7 +291,7 @@ impl Parser {
             TokenKind::LlaveAbrir,
             "Se esperaba '{' para el bloque del 'repetir'.",
         )?;
-        let bloque = self.parse_bloque()?;
+        let bloque = self.parsear_bloque()?;
 
         Ok(Some(Declaracion::Repetir {
             cantidad: Box::new(cantidad),
@@ -300,11 +300,11 @@ impl Parser {
     }
 
     /// retornar [<expr>]
-    pub(crate) fn parse_retornar(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_retornar(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
         self.avanzar(); // consume 'retornar'
 
         let valor = if self.es_inicio_expresion() {
-            Some(self.parse_expresion()?)
+            Some(self.parsear_expresion()?)
         } else {
             None
         };
@@ -313,7 +313,7 @@ impl Parser {
     }
 
     /// importar ruta/de/modulo  (sin comillas)  o  importar "ruta/absoluta" (con comillas, obligatorio para absolutas)
-    pub(crate) fn parse_importar(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_importar(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
         self.avanzar(); // consume 'importar'
 
         let ruta = match &self.peek().kind {
@@ -409,7 +409,7 @@ impl Parser {
     }
 
     /// importar externa "ruta.dll"  —  cargar librería compartida (FFI)
-    pub(crate) fn parse_importar_externa(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_importar_externa(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
         self.avanzar(); // consume 'importar'
         self.avanzar(); // consume 'externo'/'externa'
 
@@ -434,31 +434,31 @@ impl Parser {
     }
 
     /// hilo { <cuerpo> }  → como declaración
-    pub(crate) fn parse_hilo(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_hilo(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
         self.avanzar(); // consumir 'hilo'
         self.esperar(TokenKind::LlaveAbrir, "Se esperaba '{' después de 'hilo'.")?;
-        let cuerpo = self.parse_bloque()?;
-        // parse_bloque ya consume '}'
+        let cuerpo = self.parsear_bloque()?;
+        // parsear_bloque ya consume '}'
         Ok(Some(Declaracion::Expresion(Expresion::Hilo { cuerpo })))
     }
 
     /// canal() o canal(capacidad) → como declaración
-    pub(crate) fn parse_canal(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_canal(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
         self.avanzar(); // consumir 'canal'
-        let capacidad = self.parse_canal_capacidad()?;
+        let capacidad = self.parsear_canal_capacidad()?;
         Ok(Some(Declaracion::Expresion(Expresion::CanalNuevo(
             capacidad,
         ))))
     }
 
     /// Argumento opcional de `canal(...)`: la capacidad de la cola.
-    pub(crate) fn parse_canal_capacidad(&mut self) -> Result<Option<Box<Expresion>>, ErrorForja> {
+    pub(crate) fn parsear_canal_capacidad(&mut self) -> Result<Option<Box<Expresion>>, ErrorForja> {
         self.esperar(TokenKind::ParenAbrir, "Se esperaba '(' después de 'canal'.")?;
         if self.coincide(TokenKind::ParenCerrar) {
             self.avanzar();
             return Ok(None);
         }
-        let capacidad = self.parse_expresion()?;
+        let capacidad = self.parsear_expresion()?;
         self.esperar(TokenKind::ParenCerrar, "Se esperaba ')' después de '('.")?;
         Ok(Some(Box::new(capacidad)))
     }
@@ -468,7 +468,7 @@ impl Parser {
     ///     tiempo ms { ... }
     ///     otro -> { ... }
     /// }
-    pub(crate) fn parse_seleccionar(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_seleccionar(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
         self.avanzar(); // consume 'seleccionar'
         self.esperar(
             TokenKind::LlaveAbrir,
@@ -497,7 +497,7 @@ impl Parser {
                         TokenKind::LlaveAbrir,
                         "Se esperaba '{' para el cuerpo del caso.",
                     )?;
-                    let cuerpo = self.parse_bloque()?;
+                    let cuerpo = self.parsear_bloque()?;
                     let (linea_primero, col_primero) = (self.linea_actual(), self.columna_actual());
                     brazos.push(BrazoSeleccionar {
                         recepcion: Some((
@@ -514,12 +514,12 @@ impl Parser {
                 } else if self.coincide(TokenKind::Igual) {
                     // Sintaxis nueva: caso variable = expr { ... }
                     self.avanzar(); // consume '='
-                    let expr = self.parse_expresion()?;
+                    let expr = self.parsear_expresion()?;
                     self.esperar(
                         TokenKind::LlaveAbrir,
                         "Se esperaba '{' para el cuerpo del caso.",
                     )?;
-                    let cuerpo = self.parse_bloque()?;
+                    let cuerpo = self.parsear_bloque()?;
                     brazos.push(BrazoSeleccionar {
                         recepcion: Some((primero, expr)),
                         timeout_ms: 0,
@@ -528,7 +528,7 @@ impl Parser {
                 } else if primero == "tiempo" && self.coincide(TokenKind::ParenAbrir) {
                     // Sintaxis: caso tiempo(ms) -> { ... }  (timeout como caso)
                     self.avanzar(); // consume (
-                    let tiempo_expr = self.parse_expresion()?;
+                    let tiempo_expr = self.parsear_expresion()?;
                     self.esperar(
                         TokenKind::ParenCerrar,
                         "Se esperaba ')' después del tiempo.",
@@ -542,7 +542,7 @@ impl Parser {
                         TokenKind::LlaveAbrir,
                         "Se esperaba '{' después del timeout.",
                     )?;
-                    let cuerpo = self.parse_bloque()?;
+                    let cuerpo = self.parsear_bloque()?;
                     brazos.push(BrazoSeleccionar {
                         recepcion: None,
                         timeout_ms,
@@ -561,13 +561,13 @@ impl Parser {
             } else if self.coincide(TokenKind::Tiempo) {
                 self.avanzar(); // consume 'tiempo'
                                 // tiempo milisegundos { ... }
-                let tiempo_expr = self.parse_expresion_primaria()?;
+                let tiempo_expr = self.parsear_expresion_primaria()?;
                 let timeout_ms = extraer_numero(&tiempo_expr);
                 self.esperar(
                     TokenKind::LlaveAbrir,
                     "Se esperaba '{' después del timeout.",
                 )?;
-                let cuerpo = self.parse_bloque()?;
+                let cuerpo = self.parsear_bloque()?;
                 brazos.push(BrazoSeleccionar {
                     recepcion: None,
                     timeout_ms,
@@ -580,7 +580,7 @@ impl Parser {
                     self.esperar_flecha()?;
                 }
                 self.esperar(TokenKind::LlaveAbrir, "Se esperaba '{' después de 'otro'.")?;
-                let cuerpo = self.parse_bloque()?;
+                let cuerpo = self.parsear_bloque()?;
                 brazos.push(BrazoSeleccionar {
                     recepcion: None,
                     timeout_ms: 0,
@@ -638,7 +638,9 @@ impl Parser {
     }
 
     /// Parsea un statement que comienza con una expresión
-    pub(crate) fn parse_statement_expresion(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_expresion_sentencia(
+        &mut self,
+    ) -> Result<Option<Declaracion>, ErrorForja> {
         // Identificador: nombre o nombre.metodo() o nombre.campo = valor
         if let TokenKind::Identificador(nombre) = &self.peek().kind {
             let nombre = nombre.clone();
@@ -646,7 +648,7 @@ impl Parser {
             let linea = tok.linea;
             let columna = tok.columna;
             self.avanzar();
-            return self.parse_post_identificador(nombre, linea, columna);
+            return self.parsear_post_identificador(nombre, linea, columna);
         }
 
         // escribir() function call
@@ -656,7 +658,7 @@ impl Parser {
                 TokenKind::ParenAbrir,
                 "Se esperaba '(' después de 'escribir'.",
             )?;
-            let argumentos = self.parse_argumentos()?;
+            let argumentos = self.parsear_argumentos()?;
             self.esperar(
                 TokenKind::ParenCerrar,
                 "Se esperaba ')' después de los argumentos.",
@@ -673,7 +675,7 @@ impl Parser {
             let linea = tok.linea;
             let columna = tok.columna;
             self.avanzar();
-            return self.parse_post_identificador("self".to_string(), linea, columna);
+            return self.parsear_post_identificador("self".to_string(), linea, columna);
         }
 
         // nuevo como nombre de variable si NO sigue un Identificador (nombre de clase)
@@ -685,12 +687,12 @@ impl Parser {
                 let linea = tok.linea;
                 let columna = tok.columna;
                 self.avanzar();
-                return self.parse_post_identificador("nuevo".to_string(), linea, columna);
+                return self.parsear_post_identificador("nuevo".to_string(), linea, columna);
             }
         }
 
         // Para todo lo demás, parsear como expresión primaria
-        let expr = self.parse_expresion_primaria()?;
+        let expr = self.parsear_expresion_primaria()?;
         Ok(Some(Declaracion::Expresion(expr)))
     }
 }

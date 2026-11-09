@@ -2,7 +2,7 @@ use super::*;
 
 impl Parser {
     /// Parsea el núcleo de una expresión primaria (sin postfijo)
-    pub(crate) fn parse_expresion_primaria_interna(&mut self) -> Result<Expresion, ErrorForja> {
+    pub(crate) fn parsear_expresion_primaria_interna(&mut self) -> Result<Expresion, ErrorForja> {
         if self.coincide(TokenKind::LiteralExacto(0, 0))
             || self.coincide(TokenKind::LiteralExacto(i128::MIN, 0))
         {
@@ -41,7 +41,7 @@ impl Parser {
                 // Solo si el siguiente token está en la MISMA línea (si está en otra línea,
                 // es una declaración separada, no interpolación).
                 if self.hay_interpolacion() && linea_texto == self.peek().linea {
-                    return self.parse_string_interpolado(s, linea_texto);
+                    return self.parsear_texto_interpolado(s, linea_texto);
                 }
                 return Ok(Expresion::LiteralTexto(s));
             }
@@ -77,7 +77,7 @@ impl Parser {
                 TokenKind::ParenAbrir,
                 "Se esperaba '(' después de 'func' en el closure.",
             )?;
-            let parametros = self.parse_parametros()?;
+            let parametros = self.parsear_parametros()?;
             self.esperar(
                 TokenKind::ParenCerrar,
                 "Se esperaba ')' después de los parámetros del closure.",
@@ -86,7 +86,7 @@ impl Parser {
                 TokenKind::LlaveAbrir,
                 "Se esperaba '{' para el cuerpo del closure.",
             )?;
-            let cuerpo = self.parse_bloque()?;
+            let cuerpo = self.parsear_bloque()?;
             return Ok(Expresion::Closure { parametros, cuerpo });
         }
 
@@ -105,17 +105,17 @@ impl Parser {
                 ));
             }
             self.avanzar();
-            let first = self.parse_expresion()?;
+            let primero = self.parsear_expresion()?;
             self.profundidad_paren -= 1;
             // Si después de la primera expresión hay coma, es una tupla (a, b, ...)
             if self.coincide(TokenKind::Coma) {
-                let mut elementos = vec![first];
+                let mut elementos = vec![primero];
                 while self.coincide(TokenKind::Coma) {
                     self.avanzar();
                     if self.coincide(TokenKind::ParenCerrar) {
                         break;
                     }
-                    elementos.push(self.parse_expresion()?);
+                    elementos.push(self.parsear_expresion()?);
                 }
                 self.esperar(
                     TokenKind::ParenCerrar,
@@ -127,16 +127,16 @@ impl Parser {
                 TokenKind::ParenCerrar,
                 "Se esperaba ')' para cerrar la expresión.",
             )?;
-            return Ok(Expresion::Grupo(Box::new(first)));
+            return Ok(Expresion::Grupo(Box::new(primero)));
         }
 
         if self.coincide(TokenKind::CorcheteAbrir) {
-            return self.parse_arreglo();
+            return self.parsear_arreglo();
         }
 
         // Mapa literal: {"clave": valor, ...}
         if self.coincide(TokenKind::LlaveAbrir) {
-            return self.parse_mapa();
+            return self.parsear_mapa();
         }
 
         // Identificador, llamada a función, acceso a miembro o instanciación
@@ -176,7 +176,7 @@ impl Parser {
                         _ => unreachable!(),
                     };
                 }
-                let arg = self.parse_expresion()?;
+                let arg = self.parsear_expresion()?;
                 self.esperar(
                     TokenKind::ParenCerrar,
                     "Se esperaba ')' después del argumento.",
@@ -192,7 +192,7 @@ impl Parser {
             // Instanciación con BD()
             if nombre == "BD" && self.coincide(TokenKind::ParenAbrir) {
                 self.avanzar();
-                let argumentos = self.parse_argumentos()?;
+                let argumentos = self.parsear_argumentos()?;
                 self.esperar(
                     TokenKind::ParenCerrar,
                     "Se esperaba ')' después de los argumentos de BD.",
@@ -204,7 +204,7 @@ impl Parser {
             }
 
             // Para identificadores, manejar llamadas y accesos inline
-            return self.parse_llamada_o_acceso(Expresion::Identificador {
+            return self.parsear_llamada_o_acceso(Expresion::Identificador {
                 nombre,
                 linea: id_linea,
                 columna: id_columna,
@@ -216,11 +216,11 @@ impl Parser {
             let es_instanciacion = self.pos + 1 < self.tokens.len()
                 && matches!(&self.tokens[self.pos + 1].kind, TokenKind::Identificador(_));
             if es_instanciacion {
-                return self.parse_instanciacion();
+                return self.parsear_instanciacion();
             }
             let (id_linea, id_columna) = (self.peek().linea, self.peek().columna);
             self.avanzar(); // consume 'nuevo' como identificador
-            return self.parse_llamada_o_acceso(Expresion::Identificador {
+            return self.parsear_llamada_o_acceso(Expresion::Identificador {
                 nombre: "nuevo".to_string(),
                 linea: id_linea,
                 columna: id_columna,
@@ -236,7 +236,7 @@ impl Parser {
                 columna: id_columna,
             };
             if self.coincide(TokenKind::Punto) {
-                return self.parse_acceso_miembro(expr);
+                return self.parsear_acceso_miembro(expr);
             }
             return Ok(expr);
         }
@@ -245,7 +245,7 @@ impl Parser {
         if self.coincide(TokenKind::Leer) {
             self.avanzar();
             self.esperar(TokenKind::ParenAbrir, "Se esperaba '(' después de 'leer'.")?;
-            let argumentos = self.parse_argumentos()?;
+            let argumentos = self.parsear_argumentos()?;
             self.esperar(
                 TokenKind::ParenCerrar,
                 "Se esperaba ')' después de los argumentos de 'leer'.",
@@ -258,7 +258,7 @@ impl Parser {
 
         // coincidir (expr) { caso ... }
         if self.coincide(TokenKind::Coincidir) {
-            return self.parse_coincidir();
+            return self.parsear_coincidir();
         }
 
         // escribir() function
@@ -268,7 +268,7 @@ impl Parser {
                 TokenKind::ParenAbrir,
                 "Se esperaba '(' después de 'escribir'.",
             )?;
-            let argumentos = self.parse_argumentos()?;
+            let argumentos = self.parsear_argumentos()?;
             self.esperar(
                 TokenKind::ParenCerrar,
                 "Se esperaba ')' después de los argumentos de 'escribir'.",
@@ -281,21 +281,21 @@ impl Parser {
 
         // si (cond) { ... } sino { ... } como expresión (layouts condicionales)
         if self.coincide(TokenKind::Si) {
-            return self.parse_si_expresion();
+            return self.parsear_si_expresion();
         }
 
         // hilo { ... } como expresión
         if self.coincide(TokenKind::Hilo) {
             self.avanzar();
             self.esperar(TokenKind::LlaveAbrir, "Se esperaba '{' después de 'hilo'.")?;
-            let cuerpo = self.parse_bloque()?;
+            let cuerpo = self.parsear_bloque()?;
             return Ok(Expresion::Hilo { cuerpo });
         }
 
         // canal() o canal(capacidad) como expresión
         if self.coincide(TokenKind::Canal) {
             self.avanzar();
-            let capacidad = self.parse_canal_capacidad()?;
+            let capacidad = self.parsear_canal_capacidad()?;
             return Ok(Expresion::CanalNuevo(capacidad));
         }
 
@@ -312,7 +312,7 @@ impl Parser {
                 TokenKind::ParenAbrir,
                 "Se esperaba '(' después de 'anterior'",
             )?;
-            let expr = self.parse_expresion()?;
+            let expr = self.parsear_expresion()?;
             self.esperar(
                 TokenKind::ParenCerrar,
                 "Se esperaba ')' después de la expresión en 'anterior'",
@@ -363,7 +363,7 @@ impl Parser {
                 let nombre = self.peek().kind.to_string();
                 let (id_linea, id_columna) = (self.peek().linea, self.peek().columna);
                 self.avanzar();
-                return self.parse_llamada_o_acceso(Expresion::Identificador {
+                return self.parsear_llamada_o_acceso(Expresion::Identificador {
                     nombre,
                     linea: id_linea,
                     columna: id_columna,
@@ -420,7 +420,7 @@ impl Parser {
 
     /// Parsea un string interpolado, construyendo una cadena de concatenaciones binarias
     /// "Hola ${nombre}" → Suma(LiteralTexto("Hola "), Identificador("nombre"))
-    pub(crate) fn parse_string_interpolado(
+    pub(crate) fn parsear_texto_interpolado(
         &mut self,
         primer_fragmento: String,
         linea: usize,
@@ -429,9 +429,9 @@ impl Parser {
 
         loop {
             // Parsear la expresión interpolada completa (con operadores: +, -, ==, etc.)
-            // Usamos parse_expresion() en lugar de parse_expresion_primaria() para
+            // Usamos parsear_expresion() en lugar de parsear_expresion_primaria() para
             // soportar expresiones como ${a + b}, ${i + 1}, ${p1 == p2}, ${fn(arg)}, etc.
-            let expr_interp = self.parse_expresion()?;
+            let expr_interp = self.parsear_expresion()?;
             expr = Expresion::Binaria {
                 izquierda: Box::new(expr),
                 operador: Operador::Suma,
@@ -469,14 +469,14 @@ impl Parser {
     }
 
     /// Parsea postfijo: .miembro, .metodo(), (args), [índice], ? (Try)
-    pub(crate) fn parse_postfijo(&mut self, expr: Expresion) -> Result<Expresion, ErrorForja> {
+    pub(crate) fn parsear_postfijo(&mut self, expr: Expresion) -> Result<Expresion, ErrorForja> {
         let mut expr = expr;
         loop {
             if self.coincide(TokenKind::Punto) {
-                expr = self.parse_acceso_miembro(expr)?;
+                expr = self.parsear_acceso_miembro(expr)?;
             } else if self.coincide(TokenKind::ParenAbrir) {
                 self.avanzar();
-                let argumentos = self.parse_argumentos()?;
+                let argumentos = self.parsear_argumentos()?;
                 self.esperar(
                     TokenKind::ParenCerrar,
                     "Se esperaba ')' después de los argumentos.",
@@ -490,7 +490,7 @@ impl Parser {
                     };
                 }
             } else if self.coincide(TokenKind::CorcheteAbrir) {
-                expr = self.parse_index(expr)?;
+                expr = self.parsear_index(expr)?;
             } else if self.coincide(TokenKind::Interrogacion) && !self.hay_dos_puntos_adelante() {
                 self.avanzar(); // consumir ? (operador postfix Try)
                 expr = Expresion::Try(Box::new(expr));
@@ -547,9 +547,9 @@ impl Parser {
     }
 
     /// Parsea acceso por índice: expr[índice]
-    pub(crate) fn parse_index(&mut self, objeto: Expresion) -> Result<Expresion, ErrorForja> {
+    pub(crate) fn parsear_index(&mut self, objeto: Expresion) -> Result<Expresion, ErrorForja> {
         self.avanzar(); // consume [
-        let indice = self.parse_expresion()?;
+        let indice = self.parsear_expresion()?;
         self.esperar(
             TokenKind::CorcheteCerrar,
             "Se esperaba ']' después del índice.",
@@ -561,7 +561,7 @@ impl Parser {
     }
 
     /// Parsea una llamada a función o acceso a miembro después de un identificador
-    pub(crate) fn parse_llamada_o_acceso(
+    pub(crate) fn parsear_llamada_o_acceso(
         &mut self,
         expr: Expresion,
     ) -> Result<Expresion, ErrorForja> {
@@ -580,7 +580,7 @@ impl Parser {
 
         if self.coincide(TokenKind::ParenAbrir) {
             self.avanzar();
-            let argumentos = self.parse_argumentos()?;
+            let argumentos = self.parsear_argumentos()?;
             self.esperar(
                 TokenKind::ParenCerrar,
                 "Se esperaba ')' después de los argumentos.",
@@ -591,7 +591,7 @@ impl Parser {
             }
 
             // Si es un acceso a miembro antes de los paréntesis, construimos una llamada a método
-            // ej: objeto.metodo(args) -> ya se manejó en parse_acceso_miembro
+            // ej: objeto.metodo(args) -> ya se manejó en parsear_acceso_miembro
             return Ok(Expresion::LlamadaFuncion {
                 nombre: "anon".to_string(),
                 argumentos,
@@ -599,14 +599,14 @@ impl Parser {
         }
 
         if self.coincide(TokenKind::Punto) {
-            return self.parse_acceso_miembro(expr);
+            return self.parsear_acceso_miembro(expr);
         }
 
         Ok(expr)
     }
 
     /// Parsea acceso a miembro: expr.miembro [()] [.miembro...]
-    pub(crate) fn parse_acceso_miembro(
+    pub(crate) fn parsear_acceso_miembro(
         &mut self,
         objeto: Expresion,
     ) -> Result<Expresion, ErrorForja> {
@@ -617,7 +617,7 @@ impl Parser {
         // Si sigue (, es llamada a método
         if self.coincide(TokenKind::ParenAbrir) {
             self.avanzar();
-            let argumentos = self.parse_argumentos()?;
+            let argumentos = self.parsear_argumentos()?;
             self.esperar(
                 TokenKind::ParenCerrar,
                 "Se esperaba ')' después de los argumentos.",
@@ -638,14 +638,14 @@ impl Parser {
 
         // Puede haber acceso encadenado (obj.campo.subcampo)
         if self.coincide(TokenKind::Punto) {
-            return self.parse_acceso_miembro(expr);
+            return self.parsear_acceso_miembro(expr);
         }
 
         Ok(expr)
     }
 
     /// nuevo <Clase>(<argumentos>)  o  nuevo Clase<Tipo>(<argumentos>)
-    pub(crate) fn parse_instanciacion(&mut self) -> Result<Expresion, ErrorForja> {
+    pub(crate) fn parsear_instanciacion(&mut self) -> Result<Expresion, ErrorForja> {
         self.avanzar(); // consume 'nuevo'
 
         let clase =
@@ -679,7 +679,7 @@ impl Parser {
                 loop {
                     let campo = self.esperar_identificador("Se esperaba nombre de campo")?;
                     self.esperar(TokenKind::DosPuntos, "Se esperaba ':' después del campo")?;
-                    let val = self.parse_expresion()?;
+                    let val = self.parsear_expresion()?;
                     pares.push((Expresion::LiteralTexto(campo), val));
                     if self.coincide(TokenKind::Coma) {
                         self.avanzar();
@@ -709,7 +709,7 @@ impl Parser {
             });
         }
         self.avanzar(); // consume '('
-        let argumentos = self.parse_argumentos()?;
+        let argumentos = self.parsear_argumentos()?;
         self.esperar(
             TokenKind::ParenCerrar,
             "Se esperaba ')' después de los argumentos.",
@@ -719,13 +719,13 @@ impl Parser {
     }
 
     /// Arreglo: [<expr>, <expr>, ...]
-    pub(crate) fn parse_arreglo(&mut self) -> Result<Expresion, ErrorForja> {
+    pub(crate) fn parsear_arreglo(&mut self) -> Result<Expresion, ErrorForja> {
         self.avanzar(); // consume '['
         let mut elementos = Vec::new();
 
         if !self.coincide(TokenKind::CorcheteCerrar) {
             loop {
-                elementos.push(self.parse_expresion()?);
+                elementos.push(self.parsear_expresion()?);
                 if self.coincide(TokenKind::Coma) {
                     self.avanzar();
                     if self.coincide(TokenKind::CorcheteCerrar) {
@@ -745,7 +745,7 @@ impl Parser {
     }
 
     /// Mapa literal: {"clave": valor, ...} o {clave = valor, ...} (estilo Lua)
-    pub(crate) fn parse_mapa(&mut self) -> Result<Expresion, ErrorForja> {
+    pub(crate) fn parsear_mapa(&mut self) -> Result<Expresion, ErrorForja> {
         self.avanzar(); // consume '{'
         let mut pares = Vec::new();
 
@@ -773,16 +773,16 @@ impl Parser {
                             String::new()
                         };
                     self.avanzar(); // consumir '=' o ':'
-                    let valor = self.parse_expresion()?;
+                    let valor = self.parsear_expresion()?;
                     pares.push((Expresion::LiteralTexto(nombre), valor));
                 } else {
                     // Sintaxis normal: {"clave": valor} o {expresion: valor}
-                    let clave = self.parse_expresion()?;
+                    let clave = self.parsear_expresion()?;
                     self.esperar(
                         TokenKind::DosPuntos,
                         "Se esperaba ':' o '=' después de la clave del mapa.",
                     )?;
-                    let valor = self.parse_expresion()?;
+                    let valor = self.parsear_expresion()?;
                     pares.push((clave, valor));
                 }
 
@@ -805,7 +805,7 @@ impl Parser {
     }
 
     /// Parsea la lista de argumentos: <expr> [, <expr>]*
-    pub(crate) fn parse_argumentos(&mut self) -> Result<Vec<Expresion>, ErrorForja> {
+    pub(crate) fn parsear_argumentos(&mut self) -> Result<Vec<Expresion>, ErrorForja> {
         let mut argumentos = Vec::new();
 
         if self.coincide(TokenKind::ParenCerrar) {
@@ -813,7 +813,7 @@ impl Parser {
         }
 
         loop {
-            argumentos.push(self.parse_expresion()?);
+            argumentos.push(self.parsear_expresion()?);
             if self.coincide(TokenKind::Coma) {
                 self.avanzar();
                 if self.coincide(TokenKind::ParenCerrar) {

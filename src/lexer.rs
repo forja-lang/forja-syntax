@@ -6,7 +6,7 @@ use crate::token::{Token, TokenKind};
 /// Un `string_buf` reutilizable evita crear/destruir Strings temporales en
 /// cada llamada a `leer_identificador_o_keyword()` y `leer_numero()`.
 pub struct Lexer {
-    source: Vec<char>,
+    fuente: Vec<char>,
     pos: usize,
     linea: usize,
     columna: usize,
@@ -14,30 +14,30 @@ pub struct Lexer {
     tokens_pendientes: Vec<Token>,
     /// Buffer reutilizable para construir strings de tokens (evita allocations
     /// repetidas de String en hot paths como identificadores y números)
-    string_buf: String,
+    buffer_texto: String,
 }
 
 impl Lexer {
-    pub fn new(source: &str) -> Self {
-        // Pre-reservar capacidad para tokens basado en la longitud del source
+    pub fn new(fuente: &str) -> Self {
+        // Pre-reservar capacidad para tokens basado en la longitud del fuente
         // (heurística: ~1 token cada 5 caracteres como mínimo)
-        let estimated_tokens = (source.len() / 5).max(64);
+        let estimated_tokens = (fuente.len() / 5).max(64);
         Lexer {
-            source: source.chars().collect(),
+            fuente: fuente.chars().collect(),
             pos: 0,
             linea: 1,
             columna: 1,
             tokens_pendientes: Vec::with_capacity(estimated_tokens / 4),
-            string_buf: String::with_capacity(64),
+            buffer_texto: String::with_capacity(64),
         }
     }
 
     /// Procesa todo el código fuente y devuelve un Vec de Tokens
     pub fn tokenize(&mut self) -> Result<Vec<Token>, Vec<ErrorForja>> {
         // Pre-asignar capacidad para reducir reallocs (estimación: 1 token cada 5 chars)
-        let estimated = (self.source.len() / 5).max(64);
+        let estimated = (self.fuente.len() / 5).max(64);
         let mut tokens = Vec::with_capacity(estimated);
-        let mut errors = Vec::with_capacity(4);
+        let mut errores = Vec::with_capacity(4);
 
         loop {
             self.skip_whitespace();
@@ -45,7 +45,7 @@ impl Lexer {
 
             // Los tokens pendientes de una interpolación (${...}) se encolan
             // aunque el fuente ya haya llegado al final; drenarlos antes del EOF.
-            if self.pos >= self.source.len() && self.tokens_pendientes.is_empty() {
+            if self.pos >= self.fuente.len() && self.tokens_pendientes.is_empty() {
                 tokens.push(Token::new(TokenKind::EOF, self.linea, self.columna));
                 break;
             }
@@ -66,26 +66,26 @@ impl Lexer {
                     tokens.push(token);
                 }
                 Ok(None) => break,
-                Err(err) => errors.push(err),
+                Err(err) => errores.push(err),
             }
         }
 
-        if errors.is_empty() {
+        if errores.is_empty() {
             Ok(tokens)
         } else {
-            Err(errors)
+            Err(errores)
         }
     }
 
     /// Obtiene el siguiente token sin consumirlo (lookahead)
     #[allow(dead_code)]
     pub fn peek(&self) -> Option<char> {
-        self.source.get(self.pos).copied()
+        self.fuente.get(self.pos).copied()
     }
 
     /// Consume el siguiente caracter
     fn advance(&mut self) -> Option<char> {
-        let ch = self.source.get(self.pos).copied()?;
+        let ch = self.fuente.get(self.pos).copied()?;
         self.pos += 1;
         if ch == '\n' {
             self.linea += 1;
@@ -97,13 +97,13 @@ impl Lexer {
     }
 
     /// Mira el caracter actual sin consumirlo
-    fn current(&self) -> Option<char> {
-        self.source.get(self.pos).copied()
+    fn actual(&self) -> Option<char> {
+        self.fuente.get(self.pos).copied()
     }
 
     /// Omite espacios en blanco
     fn skip_whitespace(&mut self) {
-        while let Some(ch) = self.current() {
+        while let Some(ch) = self.actual() {
             if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
                 self.advance();
             } else {
@@ -116,15 +116,15 @@ impl Lexer {
     /// NOTA: No omite /// (doc comments), los deja para next_token()
     fn skip_comentarios(&mut self) {
         loop {
-            if self.current() == Some('/') {
-                let next = self.source.get(self.pos + 1).copied();
+            if self.actual() == Some('/') {
+                let next = self.fuente.get(self.pos + 1).copied();
                 if next == Some('/') {
                     // Si es /// (tres barras), es un doc comment — no omitir
-                    if self.source.get(self.pos + 2).copied() == Some('/') {
+                    if self.fuente.get(self.pos + 2).copied() == Some('/') {
                         break;
                     }
                     // Comentario de línea: skip hasta \n o EOF
-                    while let Some(ch) = self.current() {
+                    while let Some(ch) = self.actual() {
                         if ch == '\n' {
                             break;
                         }
@@ -137,7 +137,7 @@ impl Lexer {
                     self.advance(); // skip *
                     loop {
                         match self.advance() {
-                            Some('*') if self.current() == Some('/') => {
+                            Some('*') if self.actual() == Some('/') => {
                                 self.advance(); // skip /
                                 break;
                             }
@@ -227,42 +227,42 @@ impl Lexer {
     /// Lee un identificador o keyword
     fn leer_identificador_o_keyword(&mut self) -> TokenKind {
         // Reutilizar string_buf en vez de crear un String nuevo por cada token
-        self.string_buf.clear();
-        while let Some(ch) = self.current() {
+        self.buffer_texto.clear();
+        while let Some(ch) = self.actual() {
             if ch.is_alphanumeric() || ch == '_' {
-                self.string_buf.push(ch);
+                self.buffer_texto.push(ch);
                 self.advance();
             } else {
                 break;
             }
         }
-        self.identificar_keyword(&self.string_buf)
+        self.identificar_keyword(&self.buffer_texto)
     }
 
     /// Lee un número (entero, decimal o exacto)
     fn leer_numero(&mut self) -> TokenKind {
         // Reutilizar string_buf para la parte entera
-        self.string_buf.clear();
-        while let Some(ch) = self.current() {
+        self.buffer_texto.clear();
+        while let Some(ch) = self.actual() {
             if ch.is_ascii_digit() {
-                self.string_buf.push(ch);
+                self.buffer_texto.push(ch);
                 self.advance();
             } else {
                 break;
             }
         }
-        let parte_entera = self.string_buf.clone();
+        let parte_entera = self.buffer_texto.clone();
 
         let mut parte_fraccion = String::new();
         let mut tiene_punto = false;
 
         // Verificar si tiene punto decimal
-        if self.current() == Some('.') {
-            let next = self.source.get(self.pos + 1).copied();
+        if self.actual() == Some('.') {
+            let next = self.fuente.get(self.pos + 1).copied();
             if next.is_some() && next.unwrap().is_ascii_digit() {
                 tiene_punto = true;
                 self.advance(); // consume .
-                while let Some(ch) = self.current() {
+                while let Some(ch) = self.actual() {
                     if ch.is_ascii_digit() {
                         parte_fraccion.push(ch);
                         self.advance();
@@ -274,27 +274,27 @@ impl Lexer {
         }
 
         // Verificar si tiene exponente (e/E)
-        if self.current() == Some('e') || self.current() == Some('E') {
+        if self.actual() == Some('e') || self.actual() == Some('E') {
             self.advance(); // consume e/E
-            let mut exp_str = String::new();
+            let mut exp_texto = String::new();
             // Signo opcional
-            if self.current() == Some('+') || self.current() == Some('-') {
-                exp_str.push(self.current().unwrap());
+            if self.actual() == Some('+') || self.actual() == Some('-') {
+                exp_texto.push(self.actual().unwrap());
                 self.advance();
             }
             // Leer dígitos del exponente
-            while let Some(ch) = self.current() {
+            while let Some(ch) = self.actual() {
                 if ch.is_ascii_digit() {
-                    exp_str.push(ch);
+                    exp_texto.push(ch);
                     self.advance();
                 } else {
                     break;
                 }
             }
-            let exponente: i32 = exp_str.parse().unwrap_or(0);
+            let exponente: i32 = exp_texto.parse().unwrap_or(0);
 
             // Construir coeff a partir de dígitos significativos
-            let digitos_str = format!("{}{}", parte_entera, parte_fraccion);
+            let digitos_texto = format!("{}{}", parte_entera, parte_fraccion);
             let digitos_fraccionarios = parte_fraccion.len() as i32;
             // Texto completo del literal, para caer a f64 si no cabe en i128.
             let texto_f64 = format!(
@@ -312,7 +312,7 @@ impl Lexer {
                 exponente
             );
 
-            if let Ok(coeff) = digitos_str.parse::<i128>() {
+            if let Ok(coeff) = digitos_texto.parse::<i128>() {
                 if exponente >= 0 {
                     if exponente >= digitos_fraccionarios {
                         // coeff * 10^(exponente - digitos_fraccionarios)
@@ -353,8 +353,8 @@ impl Lexer {
         // Sin exponente
         if tiene_punto {
             let digitos_fraccionarios = parte_fraccion.len();
-            let digitos_str = format!("{}{}", parte_entera, parte_fraccion);
-            let coeff = digitos_str.parse::<i128>().ok();
+            let digitos_texto = format!("{}{}", parte_entera, parte_fraccion);
+            let coeff = digitos_texto.parse::<i128>().ok();
             if digitos_fraccionarios > 15 {
                 // Más de 15 decimales → LiteralExacto
                 if let Some(coeff) = coeff {
@@ -365,8 +365,8 @@ impl Lexer {
             } else {
                 // Hasta 15 decimales → Decimal(f64), conservando los dígitos
                 // exactos para los destinos que no admiten error binario.
-                let num_str = format!("{}.{}", parte_entera, parte_fraccion);
-                if let Ok(val) = num_str.parse::<f64>() {
+                let num_texto = format!("{}.{}", parte_entera, parte_fraccion);
+                if let Ok(val) = num_texto.parse::<f64>() {
                     return TokenKind::Decimal {
                         valor: val,
                         coeff: coeff.unwrap_or(0),
@@ -441,7 +441,7 @@ impl Lexer {
             Some(c) => {
                 // Caracter simple: 'a', 'x', etc.
                 // Si el siguiente caracter es comilla de cierre, es un char literal
-                if self.current() == Some('\'') {
+                if self.actual() == Some('\'') {
                     self.advance(); // consumir '
                     Ok(Some(Token::new(TokenKind::Caracter(c), linea, columna)))
                 } else {
@@ -481,14 +481,14 @@ impl Lexer {
         let mut primer_fragmento: Option<String> = None;
 
         loop {
-            match self.current() {
+            match self.actual() {
                 Some('"') => {
                     self.advance(); // consume la comilla final "
                     break;
                 }
                 Some('\\') => {
                     self.advance(); // consume \
-                    match self.current() {
+                    match self.actual() {
                         Some('n') => {
                             self.advance();
                             s.push('\n');
@@ -512,7 +512,7 @@ impl Lexer {
                         Some('$') => {
                             // \${  →  $ literal (escape de interpolación)
                             self.advance(); // consume $
-                            if self.current() == Some('{') {
+                            if self.actual() == Some('{') {
                                 self.advance(); // consume {
                                 s.push_str("${");
                             } else {
@@ -550,7 +550,7 @@ impl Lexer {
                 }
                 Some('$') => {
                     // Verificar si es ${ (interpolación) o $$ ($ literal)
-                    let siguiente = self.source.get(self.pos + 1).copied();
+                    let siguiente = self.fuente.get(self.pos + 1).copied();
                     if siguiente == Some('{') {
                         // === INTERPOLACIÓN ===
                         let (linea_act, col_act) = (self.linea, self.columna);
@@ -629,7 +629,7 @@ impl Lexer {
             // Omitir whitespace
             self.skip_whitespace();
 
-            match self.current() {
+            match self.actual() {
                 None => {
                     return Err(ErrorForja::con_codigo(
                         ErrorTipo::ErrorLexico,
@@ -696,58 +696,58 @@ impl Lexer {
                 }
                 Some('+') => {
                     self.advance();
-                    let kind = if self.current() == Some('=') {
+                    let tipo_token = if self.actual() == Some('=') {
                         self.advance();
                         TokenKind::MasIgual
                     } else {
                         TokenKind::Mas
                     };
                     self.tokens_pendientes
-                        .push(Token::new(kind, self.linea, self.columna));
+                        .push(Token::new(tipo_token, self.linea, self.columna));
                 }
                 Some('-') => {
                     self.advance();
-                    let kind = if self.current() == Some('=') {
+                    let tipo_token = if self.actual() == Some('=') {
                         self.advance();
                         TokenKind::MenosIgual
                     } else {
                         TokenKind::Menos
                     };
                     self.tokens_pendientes
-                        .push(Token::new(kind, self.linea, self.columna));
+                        .push(Token::new(tipo_token, self.linea, self.columna));
                 }
                 Some('*') => {
                     self.advance();
-                    let kind = if self.current() == Some('=') {
+                    let tipo_token = if self.actual() == Some('=') {
                         self.advance();
                         TokenKind::PorIgual
                     } else {
                         TokenKind::Por
                     };
                     self.tokens_pendientes
-                        .push(Token::new(kind, self.linea, self.columna));
+                        .push(Token::new(tipo_token, self.linea, self.columna));
                 }
                 Some('%') => {
                     self.advance();
-                    let kind = if self.current() == Some('=') {
+                    let tipo_token = if self.actual() == Some('=') {
                         self.advance();
                         TokenKind::PorcentajeIgual
                     } else {
                         TokenKind::Porcentaje
                     };
                     self.tokens_pendientes
-                        .push(Token::new(kind, self.linea, self.columna));
+                        .push(Token::new(tipo_token, self.linea, self.columna));
                 }
                 Some('/') => {
                     self.advance();
-                    let kind = if self.current() == Some('=') {
+                    let tipo_token = if self.actual() == Some('=') {
                         self.advance();
                         TokenKind::DivididoIgual
                     } else {
                         TokenKind::Dividido
                     };
                     self.tokens_pendientes
-                        .push(Token::new(kind, self.linea, self.columna));
+                        .push(Token::new(tipo_token, self.linea, self.columna));
                 }
                 Some('.') => {
                     self.advance();
@@ -767,7 +767,7 @@ impl Lexer {
                 }
                 Some('=') => {
                     self.advance();
-                    if self.current() == Some('=') {
+                    if self.actual() == Some('=') {
                         self.advance();
                         self.tokens_pendientes.push(Token::new(
                             TokenKind::IgualIgual,
@@ -784,7 +784,7 @@ impl Lexer {
                 }
                 Some('!') => {
                     self.advance();
-                    if self.current() == Some('=') {
+                    if self.actual() == Some('=') {
                         self.advance();
                         self.tokens_pendientes.push(Token::new(
                             TokenKind::Diferente,
@@ -801,7 +801,7 @@ impl Lexer {
                 }
                 Some('>') => {
                     self.advance();
-                    if self.current() == Some('=') {
+                    if self.actual() == Some('=') {
                         self.advance();
                         self.tokens_pendientes.push(Token::new(
                             TokenKind::MayorIgual,
@@ -818,7 +818,7 @@ impl Lexer {
                 }
                 Some('<') => {
                     self.advance();
-                    if self.current() == Some('=') {
+                    if self.actual() == Some('=') {
                         self.advance();
                         self.tokens_pendientes.push(Token::new(
                             TokenKind::MenorIgual,
@@ -835,7 +835,7 @@ impl Lexer {
                 }
                 Some('&') => {
                     self.advance();
-                    if self.current() == Some('&') {
+                    if self.actual() == Some('&') {
                         self.advance();
                         self.tokens_pendientes.push(Token::new(
                             TokenKind::Y,
@@ -852,7 +852,7 @@ impl Lexer {
                 }
                 Some('|') => {
                     self.advance();
-                    if self.current() == Some('|') {
+                    if self.actual() == Some('|') {
                         self.advance();
                         self.tokens_pendientes.push(Token::new(
                             TokenKind::O,
@@ -892,7 +892,7 @@ impl Lexer {
                     self.advance(); // consumir comilla de apertura '
                     let mut contenido = String::new();
                     loop {
-                        match self.current() {
+                        match self.actual() {
                             Some('\'') => {
                                 self.advance(); // consumir comilla de cierre '
                                 break;
@@ -921,26 +921,29 @@ impl Lexer {
                 }
                 Some('"') => {
                     // String literal anidado dentro de interpolación
-                    let kind = self.leer_texto()?;
+                    let tipo_token = self.leer_texto()?;
                     self.tokens_pendientes
-                        .push(Token::new(kind, self.linea, self.columna));
+                        .push(Token::new(tipo_token, self.linea, self.columna));
                 }
                 _ => {
-                    let ch = self.current().unwrap();
+                    let ch = self.actual().unwrap();
                     if ch.is_ascii_digit() {
-                        let kind = self.leer_numero();
-                        self.tokens_pendientes
-                            .push(Token::new(kind, self.linea, self.columna));
+                        let tipo_token = self.leer_numero();
+                        self.tokens_pendientes.push(Token::new(
+                            tipo_token,
+                            self.linea,
+                            self.columna,
+                        ));
                     } else if ch.is_alphabetic() || ch == '_' {
                         // Dentro de interpolación, todos los identificadores/keywords se tratan
                         // como identificadores para que el parser pueda procesarlos como expresiones.
                         // Si devolviéramos keywords (ej: TokenKind::Tipo, TokenKind::Funcion),
                         // el parser los interpretaría como declaraciones en lugar de expresiones.
                         // Reutilizar string_buf para identificadores en interpolación
-                        self.string_buf.clear();
-                        while let Some(c) = self.current() {
+                        self.buffer_texto.clear();
+                        while let Some(c) = self.actual() {
                             if c.is_alphanumeric() || c == '_' {
-                                self.string_buf.push(c);
+                                self.buffer_texto.push(c);
                                 self.advance();
                             } else {
                                 break;
@@ -948,15 +951,18 @@ impl Lexer {
                         }
                         // Los literales booleanos/nulo conservan su token: como
                         // identificadores caían en "variable no declarada".
-                        let kind = match self.string_buf.as_str() {
+                        let tipo_token = match self.buffer_texto.as_str() {
                             "este" => TokenKind::Este,
                             "verdadero" => TokenKind::Verdadero,
                             "falso" => TokenKind::Falso,
                             "nulo" => TokenKind::Nulo,
-                            _ => TokenKind::Identificador(self.string_buf.clone()),
+                            _ => TokenKind::Identificador(self.buffer_texto.clone()),
                         };
-                        self.tokens_pendientes
-                            .push(Token::new(kind, self.linea, self.columna));
+                        self.tokens_pendientes.push(Token::new(
+                            tipo_token,
+                            self.linea,
+                            self.columna,
+                        ));
                     } else {
                         // Carácter desconocido, avanzar
                         return Err(ErrorForja::con_codigo(
@@ -976,7 +982,7 @@ impl Lexer {
     /// Procesa el símbolo & (ampersand) o && (Y lógico)
     fn leer_ampersand(&mut self) -> TokenKind {
         self.advance(); // consume &
-        if self.current() == Some('&') {
+        if self.actual() == Some('&') {
             self.advance();
             TokenKind::Y
         } else {
@@ -992,12 +998,12 @@ impl Lexer {
         }
 
         let (linea, columna) = (self.linea, self.columna);
-        let ch = match self.current() {
+        let ch = match self.actual() {
             Some(c) => c,
             None => return Ok(None),
         };
 
-        let kind = match ch {
+        let tipo_token = match ch {
             // Símbolos de un solo caracter
             '{' => {
                 self.advance();
@@ -1046,7 +1052,7 @@ impl Lexer {
             // Operadores aritméticos (y su forma de asignación compuesta)
             '+' => {
                 self.advance();
-                if self.current() == Some('=') {
+                if self.actual() == Some('=') {
                     self.advance();
                     TokenKind::MasIgual
                 } else {
@@ -1055,7 +1061,7 @@ impl Lexer {
             }
             '-' => {
                 self.advance();
-                if self.current() == Some('=') {
+                if self.actual() == Some('=') {
                     self.advance();
                     TokenKind::MenosIgual
                 } else {
@@ -1064,7 +1070,7 @@ impl Lexer {
             }
             '*' => {
                 self.advance();
-                if self.current() == Some('=') {
+                if self.actual() == Some('=') {
                     self.advance();
                     TokenKind::PorIgual
                 } else {
@@ -1073,7 +1079,7 @@ impl Lexer {
             }
             '%' => {
                 self.advance();
-                if self.current() == Some('=') {
+                if self.actual() == Some('=') {
                     self.advance();
                     TokenKind::PorcentajeIgual
                 } else {
@@ -1082,15 +1088,15 @@ impl Lexer {
             }
             '/' => {
                 // Detectar doc comment: ///
-                if self.source.get(self.pos + 1) == Some(&'/')
-                    && self.source.get(self.pos + 2) == Some(&'/')
+                if self.fuente.get(self.pos + 1) == Some(&'/')
+                    && self.fuente.get(self.pos + 2) == Some(&'/')
                 {
                     self.advance(); // consume primer /
                     self.advance(); // consume segundo /
                     self.advance(); // consume tercer /
                                     // Leer contenido del doc comment hasta nueva línea
                     let mut doc = String::new();
-                    while let Some(ch) = self.current() {
+                    while let Some(ch) = self.actual() {
                         if ch == '\n' || ch == '\r' {
                             break;
                         }
@@ -1106,7 +1112,7 @@ impl Lexer {
                 // Si es // es comentario, pero skip_comentarios ya lo maneja
                 // Aquí llegamos si es un / como operador
                 self.advance();
-                if self.current() == Some('=') {
+                if self.actual() == Some('=') {
                     self.advance();
                     TokenKind::DivididoIgual
                 } else {
@@ -1117,7 +1123,7 @@ impl Lexer {
             // Operadores relacionales y lógicos
             '>' => {
                 self.advance();
-                if self.current() == Some('=') {
+                if self.actual() == Some('=') {
                     self.advance();
                     TokenKind::MayorIgual
                 } else {
@@ -1126,7 +1132,7 @@ impl Lexer {
             }
             '<' => {
                 self.advance();
-                if self.current() == Some('=') {
+                if self.actual() == Some('=') {
                     self.advance();
                     TokenKind::MenorIgual
                 } else {
@@ -1135,7 +1141,7 @@ impl Lexer {
             }
             '=' => {
                 self.advance();
-                if self.current() == Some('=') {
+                if self.actual() == Some('=') {
                     self.advance();
                     TokenKind::IgualIgual
                 } else {
@@ -1144,7 +1150,7 @@ impl Lexer {
             }
             '!' => {
                 self.advance();
-                if self.current() == Some('=') {
+                if self.actual() == Some('=') {
                     self.advance();
                     TokenKind::Diferente
                 } else {
@@ -1153,7 +1159,7 @@ impl Lexer {
             }
             '|' => {
                 self.advance();
-                if self.current() == Some('|') {
+                if self.actual() == Some('|') {
                     self.advance();
                     TokenKind::O
                 } else {
@@ -1175,7 +1181,7 @@ impl Lexer {
 
             // Comentario estilo Python/Raven: # hasta nueva línea
             '#' => {
-                while let Some(c) = self.current() {
+                while let Some(c) = self.actual() {
                     if c == '\n' || c == '\r' {
                         break;
                     }
@@ -1202,7 +1208,7 @@ impl Lexer {
                 self.advance(); // consumir comilla de apertura '
                                 // Verificar si es string de varios caracteres o caracter literal
                                 // 'a' → 1 char, siguiente es '. 'hola' → múltiples chars
-                if self.current().is_none_or(|c| c == '\'') {
+                if self.actual().is_none_or(|c| c == '\'') {
                     // ' vacío o '' → tratar como caracter
                     return self.leer_caracter(linea, columna);
                 }
@@ -1211,10 +1217,10 @@ impl Lexer {
                 let saved_linea = self.linea;
                 let saved_col = self.columna;
                 let mut content = String::new();
-                let mut is_multi = false;
-                while let Some(ch) = self.current() {
+                let mut es_multilinea = false;
+                while let Some(ch) = self.actual() {
                     if ch == '\'' {
-                        if !is_multi {
+                        if !es_multilinea {
                             // Solo un caracter -> es caracter literal
                             self.pos = saved_pos;
                             self.linea = saved_linea;
@@ -1229,7 +1235,7 @@ impl Lexer {
                     }
                     content.push(ch);
                     self.advance();
-                    is_multi = true;
+                    es_multilinea = true;
                 }
                 // No se encontró cierre - restaurar y tratar como caracter
                 self.pos = saved_pos;
@@ -1259,7 +1265,7 @@ impl Lexer {
             }
         };
 
-        Ok(Some(Token::new(kind, linea, columna)))
+        Ok(Some(Token::new(tipo_token, linea, columna)))
     }
 }
 
@@ -1269,8 +1275,8 @@ mod tests {
 
     #[test]
     fn test_tokenize_variable() {
-        let source = "variable x = 5";
-        let mut lexer = Lexer::new(source);
+        let fuente = "variable x = 5";
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Variable);
         assert_eq!(tokens[1].kind, TokenKind::Identificador("x".to_string()));
@@ -1281,8 +1287,8 @@ mod tests {
 
     #[test]
     fn test_tokenize_mut() {
-        let source = "variable mut x = 10";
-        let mut lexer = Lexer::new(source);
+        let fuente = "variable mut x = 10";
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Variable);
         assert_eq!(tokens[1].kind, TokenKind::Mut);
@@ -1293,8 +1299,8 @@ mod tests {
 
     #[test]
     fn test_tokenize_si_sino() {
-        let source = "si (x > 0) { } sino { }";
-        let mut lexer = Lexer::new(source);
+        let fuente = "si (x > 0) { } sino { }";
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Si);
         assert_eq!(tokens[1].kind, TokenKind::ParenAbrir);
@@ -1311,8 +1317,8 @@ mod tests {
 
     #[test]
     fn test_tokenize_bucles() {
-        let source = "mientras (verdadero) { } para (i = 0; i < 10; i = i + 1) { } repetir (5) { }";
-        let mut lexer = Lexer::new(source);
+        let fuente = "mientras (verdadero) { } para (i = 0; i < 10; i = i + 1) { } repetir (5) { }";
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         // mientras (verdadero) { }
         assert_eq!(tokens[0].kind, TokenKind::Mientras);
@@ -1331,8 +1337,8 @@ mod tests {
 
     #[test]
     fn test_tokenize_clase() {
-        let source = "clase Persona { }";
-        let mut lexer = Lexer::new(source);
+        let fuente = "clase Persona { }";
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Clase);
         assert_eq!(
@@ -1343,8 +1349,8 @@ mod tests {
 
     #[test]
     fn test_tokenize_ownership() {
-        let source = "prestado &x";
-        let mut lexer = Lexer::new(source);
+        let fuente = "prestado &x";
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Prestado);
         assert_eq!(tokens[1].kind, TokenKind::Amp);
@@ -1353,8 +1359,8 @@ mod tests {
 
     #[test]
     fn test_tokenize_escribir() {
-        let source = "escribir(\"Hola mundo\")";
-        let mut lexer = Lexer::new(source);
+        let fuente = "escribir(\"Hola mundo\")";
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Escribir);
         assert_eq!(tokens[1].kind, TokenKind::ParenAbrir);
@@ -1364,8 +1370,8 @@ mod tests {
 
     #[test]
     fn test_tokenize_comentarios() {
-        let source = "variable x = 5 // esto es un comentario\ny = 3";
-        let mut lexer = Lexer::new(source);
+        let fuente = "variable x = 5 // esto es un comentario\ny = 3";
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Variable);
         assert_eq!(tokens[4].kind, TokenKind::Identificador("y".to_string()));
@@ -1375,8 +1381,8 @@ mod tests {
     fn test_comentario_almohadilla_no_rompe_comentario_siguiente() {
         // Un `#` seguido de un `//` no debe lexear el `//` como dos divisiones
         // ni el texto del comentario como código (bug de `next_token`).
-        let source = "#\n// hola mundo\nvariable x = 5";
-        let mut lexer = Lexer::new(source);
+        let fuente = "#\n// hola mundo\nvariable x = 5";
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Variable);
         assert!(
@@ -1390,8 +1396,8 @@ mod tests {
     #[test]
     #[allow(clippy::approx_constant)]
     fn test_tokenize_numeros() {
-        let source = "42 2.5";
-        let mut lexer = Lexer::new(source);
+        let fuente = "42 2.5";
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Numero(42));
         assert_eq!(
@@ -1406,8 +1412,8 @@ mod tests {
 
     #[test]
     fn test_tokenize_operadores_relacionales() {
-        let source = ">= <= == !=";
-        let mut lexer = Lexer::new(source);
+        let fuente = ">= <= == !=";
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::MayorIgual);
         assert_eq!(tokens[1].kind, TokenKind::MenorIgual);
@@ -1417,10 +1423,10 @@ mod tests {
 
     #[test]
     fn test_tokenize_error_cadena_sin_cerrar() {
-        let source = "variable msg = \"hola";
-        let mut lexer = Lexer::new(source);
-        let result = lexer.tokenize();
-        assert!(result.is_err());
+        let fuente = "variable msg = \"hola";
+        let mut lexer = Lexer::new(fuente);
+        let resultado = lexer.tokenize();
+        assert!(resultado.is_err());
     }
 
     // =====================================================
@@ -1428,9 +1434,9 @@ mod tests {
     // =====================================================
 
     #[test]
-    fn test_string_interpolacion_simple() {
-        let source = r#"escribir("Hola ${nombre}")"#;
-        let mut lexer = Lexer::new(source);
+    fn texto_interpolacion_simple() {
+        let fuente = r#"escribir("Hola ${nombre}")"#;
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Escribir);
         assert_eq!(tokens[1].kind, TokenKind::ParenAbrir);
@@ -1445,9 +1451,9 @@ mod tests {
     }
 
     #[test]
-    fn test_string_interpolacion_multiple() {
-        let source = r#"escribir("Hola ${nombre}, edad ${edad}")"#;
-        let mut lexer = Lexer::new(source);
+    fn texto_interpolacion_multiple() {
+        let fuente = r#"escribir("Hola ${nombre}, edad ${edad}")"#;
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Escribir);
         assert_eq!(tokens[1].kind, TokenKind::ParenAbrir);
@@ -1463,9 +1469,9 @@ mod tests {
     }
 
     #[test]
-    fn test_string_sin_interpolacion() {
-        let source = r#"escribir("Hola mundo")"#;
-        let mut lexer = Lexer::new(source);
+    fn texto_sin_interpolacion() {
+        let fuente = r#"escribir("Hola mundo")"#;
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Escribir);
         assert_eq!(tokens[1].kind, TokenKind::ParenAbrir);
@@ -1474,9 +1480,9 @@ mod tests {
     }
 
     #[test]
-    fn test_string_interpolacion_escapada() {
-        let source = r#"escribir("Hola \${nombre}")"#;
-        let mut lexer = Lexer::new(source);
+    fn texto_interpolacion_escapada() {
+        let fuente = r#"escribir("Hola \${nombre}")"#;
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         // \${ debe tratarse como literal ${, sin interpolar
         assert_eq!(tokens[0].kind, TokenKind::Escribir);
@@ -1489,10 +1495,10 @@ mod tests {
     }
 
     #[test]
-    fn test_string_llave_literal() {
+    fn texto_llave_literal() {
         // `{` sin `$` es un carácter literal (no interpolación directa).
-        let source = r#"escribir("funcion f() -> ${tipo} {\n")"#;
-        let mut lexer = Lexer::new(source);
+        let fuente = r#"escribir("funcion f() -> ${tipo} {\n")"#;
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Escribir);
         assert_eq!(tokens[1].kind, TokenKind::ParenAbrir);
@@ -1506,10 +1512,10 @@ mod tests {
     }
 
     #[test]
-    fn test_string_llaves_literales_simples() {
+    fn texto_llaves_literales_simples() {
         // Un string con llaves literales y sin interpolación se preserva tal cual.
-        let source = r#"escribir("{ \"clave\": 1 }")"#;
-        let mut lexer = Lexer::new(source);
+        let fuente = r#"escribir("{ \"clave\": 1 }")"#;
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Escribir);
         assert_eq!(tokens[1].kind, TokenKind::ParenAbrir);
@@ -1521,9 +1527,9 @@ mod tests {
     }
 
     #[test]
-    fn test_string_interpolacion_doble_dolar() {
-        let source = r#"escribir("$${nombre}")"#;
-        let mut lexer = Lexer::new(source);
+    fn texto_interpolacion_doble_dolar() {
+        let fuente = r#"escribir("$${nombre}")"#;
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         // $$ debe producir $ literal, y luego ${nombre} es interpolación
         assert_eq!(tokens[0].kind, TokenKind::Escribir);
@@ -1538,9 +1544,9 @@ mod tests {
     }
 
     #[test]
-    fn test_string_interpolacion_con_expresion() {
-        let source = r#"escribir("Resultado: ${a + b}")"#;
-        let mut lexer = Lexer::new(source);
+    fn texto_interpolacion_con_expresion() {
+        let fuente = r#"escribir("Resultado: ${a + b}")"#;
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Escribir);
         assert_eq!(tokens[1].kind, TokenKind::ParenAbrir);
@@ -1553,9 +1559,9 @@ mod tests {
     }
 
     #[test]
-    fn test_string_interpolacion_con_acceso_miembro() {
-        let source = r#"escribir("${persona.nombre}")"#;
-        let mut lexer = Lexer::new(source);
+    fn texto_interpolacion_con_acceso_miembro() {
+        let fuente = r#"escribir("${persona.nombre}")"#;
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Escribir);
         assert_eq!(tokens[1].kind, TokenKind::ParenAbrir);
@@ -1574,9 +1580,9 @@ mod tests {
     }
 
     #[test]
-    fn test_string_interpolacion_con_funcion() {
-        let source = r#"escribir("${saludar(nombre)}")"#;
-        let mut lexer = Lexer::new(source);
+    fn texto_interpolacion_con_funcion() {
+        let fuente = r#"escribir("${saludar(nombre)}")"#;
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Escribir);
         assert_eq!(tokens[1].kind, TokenKind::ParenAbrir);
@@ -1596,9 +1602,9 @@ mod tests {
     }
 
     #[test]
-    fn test_string_interpolacion_vacia() {
-        let source = r#"escribir("${x}")"#;
-        let mut lexer = Lexer::new(source);
+    fn texto_interpolacion_vacia() {
+        let fuente = r#"escribir("${x}")"#;
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize().unwrap();
         assert_eq!(tokens[0].kind, TokenKind::Escribir);
         assert_eq!(tokens[1].kind, TokenKind::ParenAbrir);
@@ -1628,7 +1634,7 @@ pub struct Comentario {
 ///
 /// Es la base de el formatter reconstruye desde el AST (que no conserva
 /// comentarios), así que se reinsertan por línea del token siguiente.
-pub fn extraer_comentarios(source: &str) -> Vec<Comentario> {
+pub fn extraer_comentarios(fuente: &str) -> Vec<Comentario> {
     struct Crudo {
         linea: usize,
         columna: usize,
@@ -1638,7 +1644,7 @@ pub fn extraer_comentarios(source: &str) -> Vec<Comentario> {
         bloque: bool,
     }
 
-    let chars: Vec<char> = source.chars().collect();
+    let chars: Vec<char> = fuente.chars().collect();
     let mut crudos: Vec<Crudo> = Vec::new();
     let mut i = 0usize;
     let mut linea = 1usize;
@@ -1777,7 +1783,7 @@ pub fn extraer_comentarios(source: &str) -> Vec<Comentario> {
     // Tokens significativos (sin doc comments ni EOF) para asociar cada
     // comentario con el token que lo sigue.
     let mut tokens: Vec<(usize, usize, String)> = Vec::new();
-    if let Ok(lista) = Lexer::new(source).tokenize() {
+    if let Ok(lista) = Lexer::new(fuente).tokenize() {
         for t in lista {
             if matches!(t.kind, TokenKind::DocComment(_) | TokenKind::EOF) {
                 continue;

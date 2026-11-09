@@ -17,7 +17,7 @@ impl Parser {
         let mut declaraciones = Vec::new();
 
         while !self.es_eof() {
-            match self.parse_declaracion() {
+            match self.parsear_declaracion() {
                 Ok(Some(decl)) => declaraciones.push(decl),
                 Ok(None) => break,
                 Err(mut err) => {
@@ -67,7 +67,7 @@ impl Parser {
     // ============================================================
 
     /// Parsea atributos/anotaciones (@derive(Eq), @test, etc.)
-    pub(crate) fn parse_atributos(&mut self) -> Vec<Atributo> {
+    pub(crate) fn parsear_atributos(&mut self) -> Vec<Atributo> {
         let mut atributos = Vec::new();
         while self.coincide(TokenKind::Arroba) {
             self.avanzar(); // consume @
@@ -102,9 +102,9 @@ impl Parser {
     }
 
     /// Parsea una declaración. Retorna None si es EOF.
-    pub(crate) fn parse_declaracion(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_declaracion(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
         // Prevenir stack overflow en recursión profunda (ej: 100k paréntesis anidados +
-        // el bucle de reintento en parse_declaracion).
+        // el bucle de reintento en parsear_declaracion).
         self.profundidad += 1;
         if self.profundidad > MAX_PROFUNDIDAD {
             self.profundidad -= 1;
@@ -128,10 +128,10 @@ impl Parser {
         let doc_comment = self.recolectar_doc_comments();
 
         // Recolectar atributos antes de parsear la declaración
-        let atributos = self.parse_atributos();
+        let atributos = self.parsear_atributos();
 
         let mut decl = match self.peek().kind {
-            TokenKind::Variable | TokenKind::Constante => self.parse_variable_decl(),
+            TokenKind::Variable | TokenKind::Constante => self.parsear_declaracion_variable(),
             TokenKind::Funcion => {
                 // 'funcion' puede ser inicio de declaración de función O llamada a función
                 // (ej: funcion() como parámetro callback). Verificamos si el siguiente
@@ -139,24 +139,24 @@ impl Parser {
                 if self.pos + 1 < self.tokens.len()
                     && self.tokens[self.pos + 1].kind == TokenKind::ParenAbrir
                 {
-                    match self.parse_statement_expresion() {
+                    match self.parsear_expresion_sentencia() {
                         Ok(r) => Ok(r),
                         Err(_) => {
                             self.avanzar();
-                            return self.parse_declaracion();
+                            return self.parsear_declaracion();
                         }
                     }
                 } else {
-                    self.parse_funcion()
+                    self.parsear_funcion()
                 }
             }
-            TokenKind::Clase => self.parse_clase(),
-            TokenKind::Si => self.parse_si(),
-            TokenKind::Mientras => self.parse_mientras(),
-            TokenKind::Para => self.parse_para(),
-            TokenKind::Repetir => self.parse_repetir(),
-            TokenKind::Cuando => self.parse_cuando(),
-            TokenKind::Retornar => self.parse_retornar(),
+            TokenKind::Clase => self.parsear_clase(),
+            TokenKind::Si => self.parsear_si(),
+            TokenKind::Mientras => self.parsear_mientras(),
+            TokenKind::Para => self.parsear_para(),
+            TokenKind::Repetir => self.parsear_repetir(),
+            TokenKind::Cuando => self.parsear_cuando(),
+            TokenKind::Retornar => self.parsear_retornar(),
             TokenKind::Romper => {
                 self.avanzar();
                 Ok(Some(Declaracion::Romper))
@@ -170,23 +170,23 @@ impl Parser {
                 if self.pos + 1 < self.tokens.len() {
                     let next = &self.tokens[self.pos + 1];
                     if next.kind == TokenKind::Externo {
-                        self.parse_importar_externa()
+                        self.parsear_importar_externa()
                     } else {
-                        self.parse_importar()
+                        self.parsear_importar()
                     }
                 } else {
-                    self.parse_importar()
+                    self.parsear_importar()
                 }
             }
-            TokenKind::Externo => self.parse_funcion(),
-            TokenKind::Hilo => self.parse_hilo(),
-            TokenKind::Canal => self.parse_canal(),
-            TokenKind::Seleccionar => self.parse_seleccionar(),
-            TokenKind::Rasgo => self.parse_rasgo(),
+            TokenKind::Externo => self.parsear_funcion(),
+            TokenKind::Hilo => self.parsear_hilo(),
+            TokenKind::Canal => self.parsear_canal(),
+            TokenKind::Seleccionar => self.parsear_seleccionar(),
+            TokenKind::Rasgo => self.parsear_rasgo(),
             TokenKind::Tipo => {
                 // 'tipo' es soft keyword: `tipo Nombre = …` declara un enum, pero
                 // `tipo = valor` es una asignación a una variable llamada `tipo`.
-                // Antes se intentaba `parse_statement_expresion`, que no conoce
+                // Antes se intentaba `parsear_expresion_sentencia`, que no conoce
                 // el keyword como identificador: fallaba y partía la asignación
                 // en dos sentencias (`tipo` y `valor`), perdiendo el `=`.
                 if self.pos + 1 < self.tokens.len()
@@ -195,12 +195,12 @@ impl Parser {
                     let tok = self.peek().clone();
                     let (linea, columna) = (tok.linea, tok.columna);
                     self.avanzar();
-                    self.parse_post_identificador("tipo".to_string(), linea, columna)
+                    self.parsear_post_identificador("tipo".to_string(), linea, columna)
                 } else {
-                    self.parse_enum()
+                    self.parsear_enum()
                 }
             }
-            TokenKind::Implementa => self.parse_implementacion(),
+            TokenKind::Implementa => self.parsear_implementacion(),
             // `resultado` es keyword (valor de retorno en postcondiciones) pero
             // también se usa como variable corriente: `resultado = resultado + c`
             // en posición de sentencia es una asignación. Antes se partía en dos
@@ -209,7 +209,7 @@ impl Parser {
                 let tok = self.peek().clone();
                 let (linea, columna) = (tok.linea, tok.columna);
                 self.avanzar();
-                self.parse_post_identificador("resultado".to_string(), linea, columna)
+                self.parsear_post_identificador("resultado".to_string(), linea, columna)
             }
             TokenKind::LlaveCerrar => Ok(None), // fin de bloque
             _ => {
@@ -224,14 +224,14 @@ impl Parser {
                         | TokenKind::Este
                         | TokenKind::Nuevo
                 ) {
-                    return self.parse_statement_expresion();
+                    return self.parsear_expresion_sentencia();
                 }
                 // Token inesperado: intentar como expresión; si falla, saltar y reintentar
-                match self.parse_statement_expresion() {
+                match self.parsear_expresion_sentencia() {
                     Ok(r) => Ok(r),
                     Err(_) => {
                         self.avanzar(); // consumir token problemático
-                        return self.parse_declaracion(); // reintentar
+                        return self.parsear_declaracion(); // reintentar
                     }
                 }
             }
@@ -272,7 +272,9 @@ impl Parser {
     /// variable <nombre> [: <tipo>] [= <expr>]   → mutable
     /// constante <nombre> [: <tipo>] [= <expr>]  → inmutable
     /// variable a, b = <expr>                     → asignación múltiple
-    pub(crate) fn parse_variable_decl(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_declaracion_variable(
+        &mut self,
+    ) -> Result<Option<Declaracion>, ErrorForja> {
         let tok = self.peek().clone();
         let linea = tok.linea;
         let columna = tok.columna;
@@ -306,7 +308,7 @@ impl Parser {
                 "Se esperaba ')' después de los nombres de variable.",
             )?;
             self.esperar(TokenKind::Igual, "Se esperaba '=' después del patrón.")?;
-            let valor = self.parse_expresion()?;
+            let valor = self.parsear_expresion()?;
             return Ok(Some(Declaracion::AsignacionMultiple {
                 variables,
                 mutable,
@@ -333,7 +335,7 @@ impl Parser {
                 "Se esperaba ']' después de los nombres de variable.",
             )?;
             self.esperar(TokenKind::Igual, "Se esperaba '=' después del patrón.")?;
-            let valor = self.parse_expresion()?;
+            let valor = self.parsear_expresion()?;
             return Ok(Some(Declaracion::AsignacionMultiple {
                 variables,
                 mutable,
@@ -359,7 +361,7 @@ impl Parser {
                 TokenKind::Igual,
                 "Se esperaba '=' después de las variables.",
             )?;
-            let valor = self.parse_expresion()?;
+            let valor = self.parsear_expresion()?;
             return Ok(Some(Declaracion::AsignacionMultiple {
                 variables,
                 mutable,
@@ -370,7 +372,7 @@ impl Parser {
         // Tipo opcional
         let tipo = if self.coincide(TokenKind::DosPuntos) {
             self.avanzar();
-            Some(self.parse_tipo()?)
+            Some(self.parsear_tipo()?)
         } else {
             None
         };
@@ -386,10 +388,10 @@ impl Parser {
             if es_decimal_exacto(tipo.as_ref()) {
                 match self.literal_decimal_exacto() {
                     Some(expresion) => Some(expresion),
-                    None => Some(self.parse_expresion()?),
+                    None => Some(self.parsear_expresion()?),
                 }
             } else {
-                Some(self.parse_expresion()?)
+                Some(self.parsear_expresion()?)
             }
         } else {
             None
@@ -406,7 +408,7 @@ impl Parser {
     }
 
     /// funcion [asincrona] <nombre>(<parametros>) [-> <tipo>] { <cuerpo> }
-    pub(crate) fn parse_funcion(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_funcion(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
         // La declaración puede empezar con `funcion` o con `externo`
         // (`externo printf(...) -> Entero;` es alias de `funcion externa ...;`).
         let empieza_externo = self.coincide(TokenKind::Externo);
@@ -429,15 +431,15 @@ impl Parser {
         let nombre = self.esperar_identificador("Se esperaba el nombre de la función.")?;
 
         // Parsear parámetros de tipo genérico <T, U> si existen
-        let parametros_tipo = self.parse_parametros_tipo()?;
-        let genericos_prev = self.genericos.len();
+        let parametros_tipo = self.parsear_parametros_tipo()?;
+        let genericos_previos = self.genericos.len();
         self.abrir_genericos(&parametros_tipo);
 
         self.esperar(
             TokenKind::ParenAbrir,
             "Se esperaba '(' después del nombre de la función.",
         )?;
-        let parametros = self.parse_parametros()?;
+        let parametros = self.parsear_parametros()?;
         self.esperar(
             TokenKind::ParenCerrar,
             "Se esperaba ')' después de los parámetros.",
@@ -450,7 +452,7 @@ impl Parser {
             self.avanzar();
             if self.coincide(TokenKind::Mayor) {
                 self.avanzar();
-                Some(self.parse_tipo()?)
+                Some(self.parsear_tipo()?)
             } else {
                 return Err(ErrorForja::con_codigo(
                     ErrorTipo::ErrorSintactico,
@@ -472,7 +474,7 @@ impl Parser {
                 "Se esperaba ';' al final de la declaración externa.",
             )?;
             let enlace_nombre = Some(nombre.clone());
-            self.genericos.truncate(genericos_prev);
+            self.genericos.truncate(genericos_previos);
             Ok(Some(Declaracion::Funcion {
                 nombre,
                 parametros_tipo: vec![],
@@ -489,14 +491,14 @@ impl Parser {
             }))
         } else {
             // Parsear contratos Design by Contract
-            let (precondiciones, postcondiciones) = self.parse_contratos()?;
+            let (precondiciones, postcondiciones) = self.parsear_contratos()?;
 
             self.esperar(
                 TokenKind::LlaveAbrir,
                 "Se esperaba '{' para el cuerpo de la función.",
             )?;
-            let cuerpo = self.parse_bloque()?;
-            self.genericos.truncate(genericos_prev);
+            let cuerpo = self.parsear_bloque()?;
+            self.genericos.truncate(genericos_previos);
 
             Ok(Some(Declaracion::Funcion {
                 nombre,
@@ -517,7 +519,9 @@ impl Parser {
 
     /// Parsea contratos (requiere/asegura) entre la firma y el cuerpo de función.
     /// Retorna (precondiciones, postcondiciones).
-    pub(crate) fn parse_contratos(&mut self) -> Result<(Vec<Contrato>, Vec<Contrato>), ErrorForja> {
+    pub(crate) fn parsear_contratos(
+        &mut self,
+    ) -> Result<(Vec<Contrato>, Vec<Contrato>), ErrorForja> {
         let mut pre = Vec::new();
         let mut post = Vec::new();
 
@@ -525,14 +529,14 @@ impl Parser {
             match self.peek().kind {
                 TokenKind::Requiere => {
                     self.avanzar();
-                    let condicion = self.parse_expresion()?;
-                    let mensaje = self.parse_mensaje_contrato();
+                    let condicion = self.parsear_expresion()?;
+                    let mensaje = self.parsear_mensaje_contrato();
                     pre.push(Contrato { condicion, mensaje });
                 }
                 TokenKind::Asegura => {
                     self.avanzar();
-                    let condicion = self.parse_expresion()?;
-                    let mensaje = self.parse_mensaje_contrato();
+                    let condicion = self.parsear_expresion()?;
+                    let mensaje = self.parsear_mensaje_contrato();
                     post.push(Contrato { condicion, mensaje });
                 }
                 _ => break,
@@ -543,27 +547,27 @@ impl Parser {
     }
 
     /// Parsea mensaje opcional de contrato: coma + texto
-    pub(crate) fn parse_mensaje_contrato(&mut self) -> Option<String> {
+    pub(crate) fn parsear_mensaje_contrato(&mut self) -> Option<String> {
         if self.coincide(TokenKind::Coma) {
             self.avanzar();
-            if let TokenKind::Texto(ref msg) = self.peek().kind {
-                let msg = msg.clone();
+            if let TokenKind::Texto(ref mensaje) = self.peek().kind {
+                let mensaje = mensaje.clone();
                 self.avanzar();
-                return Some(msg);
+                return Some(mensaje);
             }
         }
         None
     }
 
     /// Parsea invariantes de clase (keyword: siempre)
-    pub(crate) fn parse_invariantes(&mut self) -> Result<Vec<Contrato>, ErrorForja> {
+    pub(crate) fn parsear_invariantes(&mut self) -> Result<Vec<Contrato>, ErrorForja> {
         let mut inv = Vec::new();
 
         loop {
             if self.coincide(TokenKind::Siempre) {
                 self.avanzar();
-                let condicion = self.parse_expresion()?;
-                let mensaje = self.parse_mensaje_contrato();
+                let condicion = self.parsear_expresion()?;
+                let mensaje = self.parsear_mensaje_contrato();
                 inv.push(Contrato { condicion, mensaje });
             } else {
                 break;
@@ -574,18 +578,18 @@ impl Parser {
     }
 
     /// clase <nombre> [<T>] { <campos> <metodos> }
-    pub(crate) fn parse_clase(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_clase(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
         self.avanzar(); // consume 'clase'
 
         let nombre = self.esperar_identificador("Se esperaba el nombre de la clase.")?;
 
         // Parsear parámetros de tipo genérico <T, U> si existen
-        let parametros_tipo = self.parse_parametros_tipo()?;
-        let genericos_prev = self.genericos.len();
+        let parametros_tipo = self.parsear_parametros_tipo()?;
+        let genericos_previos = self.genericos.len();
         self.abrir_genericos(&parametros_tipo);
 
         // Parsear invariantes de clase (siempre)
-        let mut invariantes = self.parse_invariantes()?;
+        let mut invariantes = self.parsear_invariantes()?;
 
         self.esperar(
             TokenKind::LlaveAbrir,
@@ -597,16 +601,16 @@ impl Parser {
 
         while !self.coincide(TokenKind::LlaveCerrar) && !self.es_eof() {
             if self.coincide(TokenKind::Constructor) || self.coincide(TokenKind::Funcion) {
-                metodos.push(self.parse_metodo_en_clase()?);
+                metodos.push(self.parsear_metodo_en_clase()?);
             } else if self.coincide(TokenKind::Siempre) {
                 // los `siempre` también se aceptan **dentro** del cuerpo.
-                // Antes caían en `parse_campo_en_clase` y se descartaban en
+                // Antes caían en `parsear_campo_en_clase` y se descartaban en
                 // silencio (el invariante no se registraba y el parser no
                 // avisaba).
-                invariantes.extend(self.parse_invariantes()?);
+                invariantes.extend(self.parsear_invariantes()?);
             } else {
                 // Es una declaración de campo
-                self.parse_campo_en_clase(&mut campos)?;
+                self.parsear_campo_en_clase(&mut campos)?;
             }
         }
 
@@ -614,7 +618,7 @@ impl Parser {
             TokenKind::LlaveCerrar,
             "Se esperaba '}' para cerrar la clase.",
         )?;
-        self.genericos.truncate(genericos_prev);
+        self.genericos.truncate(genericos_previos);
 
         Ok(Some(Declaracion::Clase {
             nombre,
@@ -627,18 +631,18 @@ impl Parser {
     }
 
     /// rasgo <nombre> [<T>] [: RasgoPadre] { funcion nombre(params) [-> Tipo] ... }
-    pub(crate) fn parse_rasgo(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_rasgo(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
         self.avanzar(); // consume 'rasgo'
 
         let nombre = self.esperar_identificador("Se esperaba el nombre del rasgo.")?;
 
         // Parámetros de tipo genérico opcionales: rasgo Nombre<T>
         let parametros_tipo = if self.coincide(TokenKind::Menor) {
-            self.parse_parametros_tipo()?
+            self.parsear_parametros_tipo()?
         } else {
             Vec::new()
         };
-        let genericos_prev = self.genericos.len();
+        let genericos_previos = self.genericos.len();
         self.abrir_genericos(&parametros_tipo);
 
         // Herencia opcional: rasgo Hijo : Padre
@@ -664,7 +668,7 @@ impl Parser {
                     TokenKind::ParenAbrir,
                     "Se esperaba '(' después del nombre del método.",
                 )?;
-                let parametros = self.parse_parametros()?;
+                let parametros = self.parsear_parametros()?;
                 self.esperar(
                     TokenKind::ParenCerrar,
                     "Se esperaba ')' después de los parámetros.",
@@ -675,7 +679,7 @@ impl Parser {
                     self.avanzar();
                     if self.coincide(TokenKind::Mayor) {
                         self.avanzar();
-                        Some(self.parse_tipo()?)
+                        Some(self.parsear_tipo()?)
                     } else {
                         return Err(ErrorForja::con_codigo(
                             ErrorTipo::ErrorSintactico,
@@ -720,12 +724,12 @@ impl Parser {
             TokenKind::LlaveCerrar,
             "Se esperaba '}' para cerrar el rasgo.",
         )?;
-        self.genericos.truncate(genericos_prev);
+        self.genericos.truncate(genericos_previos);
         Ok(Some(Declaracion::Rasgo { nombre, metodos }))
     }
 
     /// tipo <nombre> = Variante1 | Variante2(Tipo, Tipo) | Variante3
-    pub(crate) fn parse_enum(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_enum(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
         self.avanzar(); // consume 'tipo'
 
         let nombre =
@@ -743,7 +747,7 @@ impl Parser {
                 self.avanzar();
                 let mut ts = Vec::new();
                 loop {
-                    ts.push(self.parse_tipo()?);
+                    ts.push(self.parsear_tipo()?);
                     if self.coincide(TokenKind::Coma) {
                         self.avanzar();
                     } else {
@@ -770,7 +774,7 @@ impl Parser {
             }
         }
 
-        // Los atributos ya fueron recolectados antes de parse_declaracion()
+        // Los atributos ya fueron recolectados antes de parsear_declaracion()
         Ok(Some(Declaracion::Enum {
             nombre,
             variantes,
@@ -779,13 +783,13 @@ impl Parser {
     }
 
     /// implementa <rasgo>[<T>] para <clase> { funcion nombre(params) [-> Tipo] { ... } ... }
-    pub(crate) fn parse_implementacion(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_implementacion(&mut self) -> Result<Option<Declaracion>, ErrorForja> {
         self.avanzar(); // consume 'implementa'
         let rasgo_nombre = self.esperar_identificador("Se esperaba nombre del rasgo.")?;
 
         // Parámetros de tipo genérico opcionales en el rasgo: implementa Comparador<Entero> para ...
         if self.coincide(TokenKind::Menor) {
-            self.parse_parametros_tipo()?; // consumir <Entero> o similares
+            self.parsear_parametros_tipo()?; // consumir <Entero> o similares
         }
 
         // consumir 'para'
@@ -810,7 +814,7 @@ impl Parser {
         let mut metodos = Vec::new();
         while !self.coincide(TokenKind::LlaveCerrar) && !self.es_eof() {
             if self.coincide(TokenKind::Funcion) || self.coincide(TokenKind::Constructor) {
-                metodos.push(self.parse_metodo_en_clase()?);
+                metodos.push(self.parsear_metodo_en_clase()?);
             }
             // Si no es 'funcion', avanzar para evitar bucle infinito
             if !self.coincide(TokenKind::Funcion)
@@ -832,7 +836,7 @@ impl Parser {
     }
 
     /// Parsea un campo dentro de una clase: <nombre> [: <tipo>]
-    pub(crate) fn parse_campo_en_clase(
+    pub(crate) fn parsear_campo_en_clase(
         &mut self,
         campos: &mut Vec<VariableClase>,
     ) -> Result<(), ErrorForja> {
@@ -841,7 +845,7 @@ impl Parser {
         // Tipo opcional: campo: Tipo
         let tipo = if self.coincide(TokenKind::DosPuntos) {
             self.avanzar();
-            Some(self.parse_tipo()?)
+            Some(self.parsear_tipo()?)
         } else {
             None
         };
@@ -851,7 +855,7 @@ impl Parser {
     }
 
     /// Parsea un método dentro de una clase o implementación
-    pub(crate) fn parse_metodo_en_clase(&mut self) -> Result<Metodo, ErrorForja> {
+    pub(crate) fn parsear_metodo_en_clase(&mut self) -> Result<Metodo, ErrorForja> {
         let es_constructor = self.coincide(TokenKind::Constructor);
         if es_constructor {
             self.avanzar(); // consume 'constructor'
@@ -869,7 +873,7 @@ impl Parser {
             TokenKind::ParenAbrir,
             "Se esperaba '(' después del nombre del método.",
         )?;
-        let parametros = self.parse_parametros()?;
+        let parametros = self.parsear_parametros()?;
         self.esperar(
             TokenKind::ParenCerrar,
             "Se esperaba ')' después de los parámetros.",
@@ -881,7 +885,7 @@ impl Parser {
             self.avanzar();
             if self.coincide(TokenKind::Mayor) {
                 self.avanzar();
-                Some(self.parse_tipo()?)
+                Some(self.parsear_tipo()?)
             } else {
                 return Err(ErrorForja::con_codigo(
                     ErrorTipo::ErrorSintactico,
@@ -897,13 +901,13 @@ impl Parser {
         };
 
         // Parsear contratos Design by Contract
-        let (precondiciones, postcondiciones) = self.parse_contratos()?;
+        let (precondiciones, postcondiciones) = self.parsear_contratos()?;
 
         self.esperar(
             TokenKind::LlaveAbrir,
             "Se esperaba '{' para el cuerpo del método.",
         )?;
-        let cuerpo = self.parse_bloque()?;
+        let cuerpo = self.parsear_bloque()?;
 
         Ok(Metodo {
             nombre: if es_constructor {
@@ -920,7 +924,7 @@ impl Parser {
     }
 
     /// Parsea la lista de parámetros: [prestado] <nombre> [, [prestado] <nombre>]*
-    pub(crate) fn parse_parametros(&mut self) -> Result<Vec<Parametro>, ErrorForja> {
+    pub(crate) fn parsear_parametros(&mut self) -> Result<Vec<Parametro>, ErrorForja> {
         let mut parametros = Vec::new();
 
         if self.coincide(TokenKind::ParenCerrar) {
@@ -952,7 +956,7 @@ impl Parser {
             // Tipo opcional
             let tipo = if self.coincide(TokenKind::DosPuntos) {
                 self.avanzar();
-                Some(self.parse_tipo()?)
+                Some(self.parsear_tipo()?)
             } else {
                 None
             };
@@ -985,7 +989,7 @@ impl Parser {
 
     /// Parsea parámetros de tipo genérico: <T, U, V>
     /// Retorna vacío si no hay <>
-    pub(crate) fn parse_parametros_tipo(&mut self) -> Result<Vec<ParametroTipo>, ErrorForja> {
+    pub(crate) fn parsear_parametros_tipo(&mut self) -> Result<Vec<ParametroTipo>, ErrorForja> {
         let mut params = Vec::new();
         if self.coincide(TokenKind::Menor) {
             self.avanzar(); // consume <

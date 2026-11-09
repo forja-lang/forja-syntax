@@ -14,7 +14,7 @@ pub struct Parser {
     pos: usize,
     errores: Vec<ErrorForja>,
     /// Profundidad de recursión global del parser (previene stack overflow).
-    /// Se incrementa al entrar a parse_declaracion y se decrementa al salir.
+    /// Se incrementa al entrar a parsear_declaracion y se decrementa al salir.
     profundidad: usize,
     /// Profundidad de anidamiento de paréntesis (para mensaje de error específico).
     profundidad_paren: usize,
@@ -23,7 +23,7 @@ pub struct Parser {
 }
 
 /// Límite máximo de profundidad de recursión global del parser.
-/// Cada llamada recursiva en parse_declaracion consume ~2KB de stack en debug mode.
+/// Cada llamada recursiva en parsear_declaracion consume ~2KB de stack en debug mode.
 /// Con 2MB de stack, 512 es seguro. Lo ponemos en 256 para ser conservadores.
 const MAX_PROFUNDIDAD: usize = 256;
 
@@ -164,14 +164,14 @@ impl Parser {
     // ============================================================
 
     /// coincidir (expr) { caso patron1 | patron2 { cuerpo } ... }
-    fn parse_coincidir(&mut self) -> Result<Expresion, ErrorForja> {
+    fn parsear_coincidir(&mut self) -> Result<Expresion, ErrorForja> {
         self.avanzar(); // consume 'coincidir'
 
         self.esperar(
             TokenKind::ParenAbrir,
             "Se esperaba '(' después de 'coincidir'.",
         )?;
-        let expr = self.parse_expresion()?;
+        let expr = self.parsear_expresion()?;
         self.esperar(
             TokenKind::ParenCerrar,
             "Se esperaba ')' después de la expresión a coincidir.",
@@ -181,7 +181,7 @@ impl Parser {
             TokenKind::LlaveAbrir,
             "Se esperaba '{' para los brazos del match.",
         )?;
-        let brazos = self.parse_brazos_match()?;
+        let brazos = self.parsear_brazos_de_coincidencia()?;
 
         Ok(Expresion::Coincidir {
             expr: Box::new(expr),
@@ -191,7 +191,7 @@ impl Parser {
 
     /// Parsea los brazos de un match: caso patron1 | patron2 { cuerpo } ...
     /// Soporta tanto sintaxis con -> (caso Patron -> { ... }) como sin él (caso Patron { ... }).
-    fn parse_brazos_match(&mut self) -> Result<Vec<BrazoMatch>, ErrorForja> {
+    fn parsear_brazos_de_coincidencia(&mut self) -> Result<Vec<BrazoMatch>, ErrorForja> {
         let mut brazos = Vec::new();
 
         while !self.coincide(TokenKind::LlaveCerrar) && !self.es_eof() {
@@ -207,13 +207,13 @@ impl Parser {
             }
             self.avanzar(); // consume 'caso'
 
-            let patrones = self.parse_patrones_con_pipe()?;
+            let patrones = self.parsear_patrones_con_barra()?;
 
             // `caso Patron si (cond)` — guarda: no soportada todavía.
             // Se rechaza con un mensaje claro en vez de dejar que el `si` se
             // confunda con el cuerpo del brazo y el patrón pierda su binding.
             // El error se registra acá además de devolverse: la recuperación de
-            // `parse_declaracion` descarta los errores de un reintento, y sin
+            // `parsear_declaracion` descarta los errores de un reintento, y sin
             // esto el usuario veía un error del checker en vez de este.
             if self.coincide(TokenKind::Si) {
                 let error = ErrorForja::con_codigo(
@@ -249,10 +249,10 @@ impl Parser {
             // Si hay {, parsear bloque completo; si no, parsear expresión simple
             let cuerpo = if self.coincide(TokenKind::LlaveAbrir) {
                 self.avanzar(); // consume {
-                self.parse_bloque()? // parse_bloque consume el }
+                self.parsear_bloque()? // parsear_bloque consume el }
             } else if self.coincide(TokenKind::Retornar) {
                 // Si la expresión es 'retornar', parsear la declaración completa
-                let decl = self.parse_declaracion()?.ok_or_else(|| {
+                let decl = self.parsear_declaracion()?.ok_or_else(|| {
                     ErrorForja::con_codigo(
                         ErrorTipo::ErrorSintactico,
                         self.linea_actual(),
@@ -265,7 +265,7 @@ impl Parser {
                 vec![decl]
             } else {
                 // Expresión simple después de ->
-                let expr = self.parse_expresion()?;
+                let expr = self.parsear_expresion()?;
                 vec![Declaracion::Expresion(expr)]
             };
 
@@ -288,10 +288,10 @@ impl Parser {
 
     /// Parsea uno o más patrones separados por | (pipe)
     /// Ej: 1 | 2 | 3  → [Literal(1), Literal(2), Literal(3)]
-    fn parse_patrones_con_pipe(&mut self) -> Result<Vec<Patron>, ErrorForja> {
+    fn parsear_patrones_con_barra(&mut self) -> Result<Vec<Patron>, ErrorForja> {
         let mut patrones = Vec::new();
         loop {
-            let patron = self.parse_patron()?;
+            let patron = self.parsear_patron()?;
             patrones.push(patron);
             if self.coincide(TokenKind::Pipe) {
                 self.avanzar(); // consume |
@@ -307,7 +307,7 @@ impl Parser {
     /// - NombreVariante(p1, p2) → Constructor(nombre, [p1, p2])
     /// - _                    → Ignorar
     /// - literal (42, "hola", verdadero, etc.) → Literal(expr)
-    fn parse_patron(&mut self) -> Result<Patron, ErrorForja> {
+    fn parsear_patron(&mut self) -> Result<Patron, ErrorForja> {
         match &self.peek().kind {
             TokenKind::Identificador(nombre) => {
                 let nombre = nombre.clone();
@@ -324,7 +324,7 @@ impl Parser {
                     let mut subpatrones = Vec::new();
                     if !self.coincide(TokenKind::ParenCerrar) {
                         loop {
-                            subpatrones.push(self.parse_patron()?);
+                            subpatrones.push(self.parsear_patron()?);
                             if self.coincide(TokenKind::Coma) {
                                 self.avanzar();
                                 if self.coincide(TokenKind::ParenCerrar) {
@@ -364,12 +364,12 @@ impl Parser {
             | TokenKind::Verdadero
             | TokenKind::Falso
             | TokenKind::Nulo => {
-                let expr = self.parse_expresion_primaria()?;
+                let expr = self.parsear_expresion_primaria()?;
                 Ok(Patron::Literal(expr))
             }
             TokenKind::Menos => {
                 // Número negativo como patrón: -5
-                let expr = self.parse_expresion_unaria()?;
+                let expr = self.parsear_expresion_unaria()?;
                 Ok(Patron::Literal(expr))
             }
             _ => Err(ErrorForja::con_codigo(
@@ -388,7 +388,7 @@ impl Parser {
 }
 
 // ============================================================
-// Funciones auxiliares para parse_seleccionar
+// Funciones auxiliares para parsear_seleccionar
 // ============================================================
 
 /// Extrae un número entero de una expresión literal
@@ -468,16 +468,16 @@ mod tests {
     use super::*;
     use crate::lexer::Lexer;
 
-    fn parse_source(source: &str) -> Result<Programa, Vec<ErrorForja>> {
-        let mut lexer = Lexer::new(source);
+    fn parsear_fuente(fuente: &str) -> Result<Programa, Vec<ErrorForja>> {
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(tokens);
         parser.parse()
     }
 
     #[test]
-    fn test_parse_variable() {
-        let prog = parse_source("variable x = 5").unwrap();
+    fn parsea_variable() {
+        let prog = parsear_fuente("variable x = 5").unwrap();
         assert_eq!(prog.declaraciones.len(), 1);
         match &prog.declaraciones[0] {
             Declaracion::Variable {
@@ -495,8 +495,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_constante() {
-        let prog = parse_source("constante x = 10").unwrap();
+    fn parsea_constante() {
+        let prog = parsear_fuente("constante x = 10").unwrap();
         match &prog.declaraciones[0] {
             Declaracion::Variable {
                 mutable, nombre, ..
@@ -512,7 +512,7 @@ mod tests {
     fn test_tipo_como_variable_en_asignacion() {
         // `tipo` es soft keyword: `tipo = valor` es una asignación, no un enum.
         // Antes se partía en dos sentencias y se perdía el `=`.
-        let prog = parse_source("funcion f() {\n    tipo = \"X\"\n}").unwrap();
+        let prog = parsear_fuente("funcion f() {\n    tipo = \"X\"\n}").unwrap();
         let cuerpo = match &prog.declaraciones[0] {
             Declaracion::Funcion { cuerpo, .. } => cuerpo,
             otra => panic!("se esperaba una función, llegó: {otra:?}"),
@@ -532,7 +532,7 @@ mod tests {
         // `tipo F =...` declaraba el tipo, pero `f: F` se parseaba como
         // parámetro genérico y la exhaustividad no veía el enum.
         let prog =
-            parse_source("tipo F = A | B\nfuncion usar(f: F) -> Entero { retornar 1 }").unwrap();
+            parsear_fuente("tipo F = A | B\nfuncion usar(f: F) -> Entero { retornar 1 }").unwrap();
         match &prog.declaraciones[1] {
             Declaracion::Funcion { parametros, .. } => {
                 assert!(
@@ -544,7 +544,7 @@ mod tests {
             otra => panic!("se esperaba una función, llegó: {otra:?}"),
         }
         // Pero un genérico declarado en <...> sigue siendo Parametro.
-        let prog = parse_source("funcion id<T>(x: T) -> T { retornar x }").unwrap();
+        let prog = parsear_fuente("funcion id<T>(x: T) -> T { retornar x }").unwrap();
         match &prog.declaraciones[0] {
             Declaracion::Funcion {
                 parametros,
@@ -557,7 +557,7 @@ mod tests {
             otra => panic!("se esperaba una función, llegó: {otra:?}"),
         }
         // `T` sin declarar en `<...>` tampoco es genérico por convención: es un tipo.
-        let prog = parse_source("funcion usar(x: T) -> T { retornar x }").unwrap();
+        let prog = parsear_fuente("funcion usar(x: T) -> T { retornar x }").unwrap();
         match &prog.declaraciones[0] {
             Declaracion::Funcion {
                 parametros,
@@ -570,7 +570,7 @@ mod tests {
             otra => panic!("se esperaba una función, llegó: {otra:?}"),
         }
         // El ámbito genérico no se filtra fuera de la declaración que lo abrió.
-        let prog = parse_source("funcion f<T>(x: T) { }\nfuncion g(y: T) { }").unwrap();
+        let prog = parsear_fuente("funcion f<T>(x: T) { }\nfuncion g(y: T) { }").unwrap();
         match &prog.declaraciones[1] {
             Declaracion::Funcion { parametros, .. } => {
                 assert!(matches!(parametros[0].tipo, Some(Tipo::Clase(ref n)) if n == "T"));
@@ -578,7 +578,7 @@ mod tests {
             otra => panic!("se esperaba una función, llegó: {otra:?}"),
         }
         // Y sí alcanza a los métodos del cuerpo de la clase y a las firmas del rasgo.
-        let prog = parse_source("clase C<T> { funcion m(x: T) -> T { retornar x } }").unwrap();
+        let prog = parsear_fuente("clase C<T> { funcion m(x: T) -> T { retornar x } }").unwrap();
         match &prog.declaraciones[0] {
             Declaracion::Clase { metodos, .. } => {
                 assert!(matches!(
@@ -588,7 +588,7 @@ mod tests {
             }
             otra => panic!("se esperaba una clase, llegó: {otra:?}"),
         }
-        let prog = parse_source("rasgo R<T> { funcion f(x: T) -> T }").unwrap();
+        let prog = parsear_fuente("rasgo R<T> { funcion f(x: T) -> T }").unwrap();
         match &prog.declaraciones[0] {
             Declaracion::Rasgo { metodos, .. } => {
                 assert!(matches!(
@@ -604,7 +604,7 @@ mod tests {
     fn test_interpolacion_no_se_come_la_sentencia_siguiente() {
         // El lexer deja un fragmento de texto vacío al cerrar el string: ese
         // fragmento no debe enganchar el identificador de la línea siguiente.
-        let prog = parse_source("funcion f() {\n    a = \"v=${b}\"\n    a = 7\n}").unwrap();
+        let prog = parsear_fuente("funcion f() {\n    a = \"v=${b}\"\n    a = 7\n}").unwrap();
         let cuerpo = match &prog.declaraciones[0] {
             Declaracion::Funcion { cuerpo, .. } => cuerpo,
             otra => panic!("se esperaba una función, llegó: {otra:?}"),
@@ -620,11 +620,11 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_si_dentro_de_argumentos() {
+    fn parsea_si_dentro_de_argumentos() {
         // `si` como elemento de una lista de argumentos (layouts condicionales).
         // Antes el parser descartaba la llamada entera y dejaba las condiciones
         // sueltas como expresiones, sin avisar.
-        let prog = parse_source(
+        let prog = parsear_fuente(
             "columna(etiqueta(\"a\"), si (x > 0) { boton(\"s\") } sino { texto(\"n\") })",
         )
         .unwrap();
@@ -651,8 +651,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_si() {
-        let prog = parse_source("si (x > 0) { variable y = 1 } sino { variable z = 2 }").unwrap();
+    fn parsea_si() {
+        let prog = parsear_fuente("si (x > 0) { variable y = 1 } sino { variable z = 2 }").unwrap();
         match &prog.declaraciones[0] {
             Declaracion::Si {
                 bloque_verdadero,
@@ -668,8 +668,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_mientras() {
-        let prog = parse_source("mientras (x < 10) { x = x + 1 }").unwrap();
+    fn parsea_mientras() {
+        let prog = parsear_fuente("mientras (x < 10) { x = x + 1 }").unwrap();
         match &prog.declaraciones[0] {
             Declaracion::Mientras { bloque, .. } => {
                 assert_eq!(bloque.len(), 1);
@@ -679,8 +679,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_cuando() {
-        let prog = parse_source("cuando (x > 30) { x = 0 }").unwrap();
+    fn parsea_cuando() {
+        let prog = parsear_fuente("cuando (x > 30) { x = 0 }").unwrap();
         match &prog.declaraciones[0] {
             Declaracion::Cuando { cuerpo, .. } => {
                 assert_eq!(cuerpo.len(), 1);
@@ -690,9 +690,9 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_para() {
-        let source = "para (variable i = 0; i < 10; i = i + 1) { escribir(i) }";
-        let prog = parse_source(source).unwrap();
+    fn parsea_para() {
+        let fuente = "para (variable i = 0; i < 10; i = i + 1) { escribir(i) }";
+        let prog = parsear_fuente(fuente).unwrap();
         match &prog.declaraciones[0] {
             Declaracion::Para {
                 inicializacion,
@@ -710,8 +710,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_repetir() {
-        let prog = parse_source("repetir (5) { escribir(\"hola\") }").unwrap();
+    fn parsea_repetir() {
+        let prog = parsear_fuente("repetir (5) { escribir(\"hola\") }").unwrap();
         match &prog.declaraciones[0] {
             Declaracion::Repetir { bloque, .. } => {
                 assert_eq!(bloque.len(), 1);
@@ -721,9 +721,9 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_clase() {
-        let source = "clase Persona { nombre constructor(n) { este.nombre = n } funcion saludar() { escribir(\"hola\") } }";
-        let prog = parse_source(source).unwrap();
+    fn parsea_clase() {
+        let fuente = "clase Persona { nombre constructor(n) { este.nombre = n } funcion saludar() { escribir(\"hola\") } }";
+        let prog = parsear_fuente(fuente).unwrap();
         match &prog.declaraciones[0] {
             Declaracion::Clase {
                 nombre, metodos, ..
@@ -737,9 +737,9 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_instanciacion() {
-        let source = "variable alumno = nuevo Estudiante(\"Ana\")";
-        let prog = parse_source(source).unwrap();
+    fn parsea_instanciacion() {
+        let fuente = "variable alumno = nuevo Estudiante(\"Ana\")";
+        let prog = parsear_fuente(fuente).unwrap();
         match &prog.declaraciones[0] {
             Declaracion::Variable { nombre, valor, .. } => {
                 assert_eq!(nombre, "alumno");
@@ -756,9 +756,9 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_escribir() {
-        let source = "escribir(\"Hola mundo\")";
-        let prog = parse_source(source).unwrap();
+    fn parsea_escribir() {
+        let fuente = "escribir(\"Hola mundo\")";
+        let prog = parsear_fuente(fuente).unwrap();
         match &prog.declaraciones[0] {
             Declaracion::LlamadaFuncion { nombre, argumentos } => {
                 assert_eq!(nombre, "escribir");
@@ -770,7 +770,7 @@ mod tests {
 
     #[test]
     fn test_importar_sin_comillas() {
-        let prog = parse_source("importar std/io").unwrap();
+        let prog = parsear_fuente("importar std/io").unwrap();
         assert_eq!(prog.declaraciones.len(), 1);
         match &prog.declaraciones[0] {
             Declaracion::Importar(ruta) => assert_eq!(ruta, "std/io"),
@@ -781,7 +781,7 @@ mod tests {
     #[test]
     fn test_importar_con_comillas_relativa_es_alias() {
         // Alias retrocompatible: `importar "std/io"` == `importar std/io`.
-        let prog = parse_source("importar \"std/io\"").unwrap();
+        let prog = parsear_fuente("importar \"std/io\"").unwrap();
         assert_eq!(prog.declaraciones.len(), 1);
         match &prog.declaraciones[0] {
             Declaracion::Importar(ruta) => assert_eq!(ruta, "std/io"),
@@ -791,7 +791,7 @@ mod tests {
 
     #[test]
     fn test_importar_con_comillas_absoluta() {
-        let prog = parse_source("importar \"/home/user/lib.fa\"").unwrap();
+        let prog = parsear_fuente("importar \"/home/user/lib.fa\"").unwrap();
         assert_eq!(prog.declaraciones.len(), 1);
         match &prog.declaraciones[0] {
             Declaracion::Importar(ruta) => assert_eq!(ruta, "/home/user/lib.fa"),
@@ -801,7 +801,7 @@ mod tests {
 
     #[test]
     fn test_importar_absoluta_windows() {
-        let prog = parse_source("importar \"C:/Users/user/lib.fa\"").unwrap();
+        let prog = parsear_fuente("importar \"C:/Users/user/lib.fa\"").unwrap();
         assert_eq!(prog.declaraciones.len(), 1);
         match &prog.declaraciones[0] {
             Declaracion::Importar(ruta) => assert_eq!(ruta, "C:/Users/user/lib.fa"),
@@ -811,8 +811,8 @@ mod tests {
 
     #[test]
     fn test_funcion_externa() {
-        let prog =
-            parse_source("funcion externa printf(formato: Texto, ...: Texto) -> Entero;").unwrap();
+        let prog = parsear_fuente("funcion externa printf(formato: Texto, ...: Texto) -> Entero;")
+            .unwrap();
         assert_eq!(prog.declaraciones.len(), 1);
         match &prog.declaraciones[0] {
             Declaracion::Funcion {
@@ -828,25 +828,25 @@ mod tests {
 
     #[test]
     fn test_externo_funcion_vieja_sintaxis_error() {
-        let result = parse_source("externo funcion printf(formato: Texto) -> Entero;");
+        let resultado = parsear_fuente("externo funcion printf(formato: Texto) -> Entero;");
         assert!(
-            result.is_err(),
+            resultado.is_err(),
             "sintaxis 'externo funcion' ya no es válida"
         );
     }
 
     #[test]
     fn test_funcion_externa_sin_punto_coma_error() {
-        let result = parse_source("funcion externa printf() {}");
+        let resultado = parsear_fuente("funcion externa printf() {}");
         assert!(
-            result.is_err(),
+            resultado.is_err(),
             "funcion externa debe terminar en ; no en llaves"
         );
     }
 
     #[test]
     fn test_importar_externa() {
-        let prog = parse_source("importar externa \"liberia.dll\"").unwrap();
+        let prog = parsear_fuente("importar externa \"liberia.dll\"").unwrap();
         assert_eq!(prog.declaraciones.len(), 1);
         match &prog.declaraciones[0] {
             Declaracion::ImportarExterna(ruta) => assert_eq!(ruta, "liberia.dll"),
@@ -856,7 +856,7 @@ mod tests {
 
     #[test]
     fn test_importar_externa_variante() {
-        let prog = parse_source("importar externo \"liberia.so\"").unwrap();
+        let prog = parsear_fuente("importar externo \"liberia.so\"").unwrap();
         assert_eq!(prog.declaraciones.len(), 1);
         match &prog.declaraciones[0] {
             Declaracion::ImportarExterna(ruta) => assert_eq!(ruta, "liberia.so"),
@@ -865,27 +865,27 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_error_sintactico() {
-        let source = "variable 123 = 5"; // 123 ahora es aceptado como nombre
-        let result = parse_source(source);
-        assert!(result.is_ok()); // ahora acepta números como nombres de variable
+    fn parsea_error_sintactico() {
+        let fuente = "variable 123 = 5"; // 123 ahora es aceptado como nombre
+        let resultado = parsear_fuente(fuente);
+        assert!(resultado.is_ok()); // ahora acepta números como nombres de variable
     }
 
     #[test]
-    fn test_parse_comas_finales() {
-        // Test trailing commas in function calls, arguments, tuples, arrays, maps, and parameters. in function calls, arguments, tuples, arrays, maps, and parameters.
+    fn parsea_comas_finales() {
+        // Prueba las comas finales en llamadas, argumentos, tuplas, arreglos, mapas y parámetros calls, arguments, tuples, arrays, maps, and parameters.
         let sources = vec![
             "funcion f(a: Entero, b: Texto,) { retornar (a, b,) }",
             "variable x = f(1, \"hola\",)",
             "variable arr = [1, 2, 3,]",
             "variable mapa = { \"clave\": 1, }",
         ];
-        for src in sources {
-            let result = parse_source(src);
+        for fuente in sources {
+            let resultado = parsear_fuente(fuente);
             assert!(
-                result.is_ok(),
+                resultado.is_ok(),
                 "Falló el parsing de trailing comma en: {}",
-                src
+                fuente
             );
         }
     }
@@ -895,7 +895,7 @@ mod tests {
     #[test]
     fn test_guarda_en_patron_se_rechaza_con_mensaje_claro() {
         let fuente = "funcion a() { coincidir (1) { caso 1 si (2 > 0) -> { retornar 1 } } }";
-        let errs = match parse_source(fuente) {
+        let errs = match parsear_fuente(fuente) {
             Ok(_) => panic!("la guarda debe diagnosticarse"),
             Err(errs) => errs,
         };

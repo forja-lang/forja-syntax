@@ -8,7 +8,7 @@ impl Parser {
     /// - ident.miembro        (acceso a miembro)
     /// - ident(args)          (llamada a función)
     /// - ident                (solo identificador)
-    pub(crate) fn parse_post_identificador(
+    pub(crate) fn parsear_post_identificador(
         &mut self,
         nombre: String,
         linea: usize,
@@ -18,7 +18,7 @@ impl Parser {
         // Debe devolverse como Declaracion::LlamadaFuncion (sin Pop, manejado por el compilador)
         if self.coincide(TokenKind::ParenAbrir) {
             self.avanzar();
-            let argumentos = self.parse_argumentos()?;
+            let argumentos = self.parsear_argumentos()?;
             self.esperar(
                 TokenKind::ParenCerrar,
                 "Se esperaba ')' después de los argumentos.",
@@ -29,7 +29,7 @@ impl Parser {
         // CASO 2: nombre = expr  (asignación simple)
         if self.coincide(TokenKind::Igual) {
             self.avanzar();
-            let valor = self.parse_expresion()?;
+            let valor = self.parsear_expresion()?;
             return Ok(Some(Declaracion::Asignacion {
                 nombre,
                 valor: Box::new(valor),
@@ -40,7 +40,7 @@ impl Parser {
 
         // CASO 2b: nombre += expr  (asignación compuesta)
         if let Some(operador) = self.tomar_operador_compuesto() {
-            let derecha = self.parse_expresion()?;
+            let derecha = self.parsear_expresion()?;
             return Ok(Some(Declaracion::Asignacion {
                 nombre: nombre.clone(),
                 valor: Box::new(Expresion::Binaria {
@@ -60,7 +60,7 @@ impl Parser {
         // CASO 3: nombre[índice] o nombre[índice] = expr (acceso/asignación por índice)
         if self.coincide(TokenKind::CorcheteAbrir) {
             self.avanzar(); // consume [
-            let indice = self.parse_expresion()?;
+            let indice = self.parsear_expresion()?;
             self.esperar(
                 TokenKind::CorcheteCerrar,
                 "Se esperaba ']' después del índice.",
@@ -69,7 +69,7 @@ impl Parser {
             // nombre[índice] = valor → AsignacionIndex (guarda el array modificado)
             if self.coincide(TokenKind::Igual) {
                 self.avanzar();
-                let valor = self.parse_expresion()?;
+                let valor = self.parsear_expresion()?;
                 return Ok(Some(Declaracion::AsignacionIndex {
                     nombre: nombre.clone(),
                     indice: Box::new(indice),
@@ -81,7 +81,7 @@ impl Parser {
 
             // nombre[índice] += valor
             if let Some(operador) = self.tomar_operador_compuesto() {
-                let valor = self.parse_expresion()?;
+                let valor = self.parsear_expresion()?;
                 return Ok(Some(Declaracion::Expresion(
                     Expresion::AsignacionCompuesta {
                         objetivo: Box::new(Expresion::Index {
@@ -115,7 +115,7 @@ impl Parser {
                 // nombre[índice][índice]...
                 if self.coincide(TokenKind::CorcheteAbrir) {
                     self.avanzar();
-                    let indice2 = self.parse_expresion()?;
+                    let indice2 = self.parsear_expresion()?;
                     self.esperar(
                         TokenKind::CorcheteCerrar,
                         "Se esperaba ']' después del índice.",
@@ -130,7 +130,7 @@ impl Parser {
                     // silencio (las matrices 2D de los ejemplos no se llenaban).
                     if self.coincide(TokenKind::Igual) {
                         self.avanzar();
-                        let valor = self.parse_expresion()?;
+                        let valor = self.parsear_expresion()?;
                         return Ok(Some(Declaracion::Expresion(Expresion::ArraySet {
                             array: Box::new(expr),
                             valor: Box::new(valor),
@@ -138,7 +138,7 @@ impl Parser {
                     }
                     // m[i][j] += valor (el objetivo encadenado se evalúa una vez)
                     if let Some(operador) = self.tomar_operador_compuesto() {
-                        let valor = self.parse_expresion()?;
+                        let valor = self.parsear_expresion()?;
                         return Ok(Some(Declaracion::Expresion(
                             Expresion::AsignacionCompuesta {
                                 objetivo: Box::new(expr),
@@ -159,7 +159,7 @@ impl Parser {
                     nombre_compuesto = format!("{}.{}", nombre_compuesto, miembro);
                     if self.coincide(TokenKind::ParenAbrir) {
                         self.avanzar();
-                        let argumentos = self.parse_argumentos()?;
+                        let argumentos = self.parsear_argumentos()?;
                         self.esperar(
                             TokenKind::ParenCerrar,
                             "Se esperaba ')' después de los argumentos.",
@@ -201,7 +201,7 @@ impl Parser {
             // nombre.miembro = valor (asignación a campo)
             if self.coincide(TokenKind::Igual) {
                 self.avanzar();
-                let valor = self.parse_expresion()?;
+                let valor = self.parsear_expresion()?;
                 return Ok(Some(Declaracion::Expresion(Expresion::AsignacionCampo {
                     objeto: Box::new(Expresion::Identificador {
                         nombre: nombre_clon,
@@ -215,7 +215,7 @@ impl Parser {
 
             // nombre.miembro += valor (asignación compuesta a campo)
             if let Some(operador) = self.tomar_operador_compuesto() {
-                let valor = self.parse_expresion()?;
+                let valor = self.parsear_expresion()?;
                 return Ok(Some(Declaracion::Expresion(
                     Expresion::AsignacionCompuesta {
                         objetivo: Box::new(Expresion::AccesoMiembro {
@@ -235,7 +235,7 @@ impl Parser {
             // nombre.miembro(args) - llamada a método
             if self.coincide(TokenKind::ParenAbrir) {
                 self.avanzar();
-                let argumentos = self.parse_argumentos()?;
+                let argumentos = self.parsear_argumentos()?;
                 self.esperar(
                     TokenKind::ParenCerrar,
                     "Se esperaba ')' después de los argumentos.",
@@ -250,7 +250,7 @@ impl Parser {
             // nombre.miembro[índice] o nombre.miembro[índice] = valor
             if self.coincide(TokenKind::CorcheteAbrir) {
                 self.avanzar();
-                let indice = self.parse_expresion()?;
+                let indice = self.parsear_expresion()?;
                 self.esperar(
                     TokenKind::CorcheteCerrar,
                     "Se esperaba ']' después del índice.",
@@ -258,7 +258,7 @@ impl Parser {
 
                 // nombre.miembro[índice] += valor
                 if let Some(operador) = self.tomar_operador_compuesto() {
-                    let valor = self.parse_expresion()?;
+                    let valor = self.parsear_expresion()?;
                     return Ok(Some(Declaracion::Expresion(
                         Expresion::AsignacionCompuesta {
                             objetivo: Box::new(Expresion::Index {
@@ -281,7 +281,7 @@ impl Parser {
                 // nombre.miembro[índice] = valor
                 if self.coincide(TokenKind::Igual) {
                     self.avanzar();
-                    let valor = self.parse_expresion()?;
+                    let valor = self.parsear_expresion()?;
                     return Ok(Some(Declaracion::Expresion(Expresion::ArraySet {
                         array: Box::new(Expresion::Index {
                             objeto: Box::new(Expresion::AccesoMiembro {
@@ -312,14 +312,14 @@ impl Parser {
                 loop {
                     if self.coincide(TokenKind::CorcheteAbrir) {
                         self.avanzar();
-                        let indice2 = self.parse_expresion()?;
+                        let indice2 = self.parsear_expresion()?;
                         self.esperar(
                             TokenKind::CorcheteCerrar,
                             "Se esperaba ']' después del índice.",
                         )?;
                         if self.coincide(TokenKind::Igual) {
                             self.avanzar();
-                            let valor = self.parse_expresion()?;
+                            let valor = self.parsear_expresion()?;
                             // Se aplican **los dos** índices: antes se perdía el
                             // primero y `m[0][1] = 4` escribía en `m[1]`.
                             let full_index = Expresion::Index {
@@ -336,7 +336,7 @@ impl Parser {
                         }
                         // nombre.miembro[i][j] += valor
                         if let Some(operador) = self.tomar_operador_compuesto() {
-                            let valor = self.parse_expresion()?;
+                            let valor = self.parsear_expresion()?;
                             let full_index = Expresion::Index {
                                 objeto: Box::new(Expresion::Index {
                                     objeto: Box::new(expr),
@@ -375,7 +375,7 @@ impl Parser {
                     )?;
                     if self.coincide(TokenKind::ParenAbrir) {
                         self.avanzar();
-                        let argumentos = self.parse_argumentos()?;
+                        let argumentos = self.parsear_argumentos()?;
                         self.esperar(
                             TokenKind::ParenCerrar,
                             "Se esperaba ')' después de los argumentos.",
@@ -414,7 +414,7 @@ impl Parser {
                     nombre_compuesto = format!("{}.{}", nombre_compuesto, m2);
                     if self.coincide(TokenKind::ParenAbrir) {
                         self.avanzar();
-                        let argumentos = self.parse_argumentos()?;
+                        let argumentos = self.parsear_argumentos()?;
                         self.esperar(
                             TokenKind::ParenCerrar,
                             "Se esperaba ')' después de los argumentos.",
@@ -447,8 +447,8 @@ impl Parser {
     // Parsing de expresiones (con precedencia)
     // ============================================================
 
-    pub(crate) fn parse_expresion(&mut self) -> Result<Expresion, ErrorForja> {
-        self.parse_expresion_asignacion()
+    pub(crate) fn parsear_expresion(&mut self) -> Result<Expresion, ErrorForja> {
+        self.parsear_expresion_asignacion()
     }
 
     /// Consume un operador de asignación compuesta y devuelve el operador
@@ -469,15 +469,15 @@ impl Parser {
     /// Asignación como expresión (precedencia más baja): x = 5, a = b = 3
     /// La asignación es asociativa a la derecha. También cubre `x += 1` y sus
     /// variantes (nodo `AsignacionCompuesta`, para evaluar el objetivo una vez).
-    pub(crate) fn parse_expresion_asignacion(&mut self) -> Result<Expresion, ErrorForja> {
-        let expr = self.parse_expresion_ternario()?;
+    pub(crate) fn parsear_expresion_asignacion(&mut self) -> Result<Expresion, ErrorForja> {
+        let expr = self.parsear_expresion_ternario()?;
         let compuesto = self.tomar_operador_compuesto();
         if compuesto.is_none() && !self.coincide(TokenKind::Igual) {
             return Ok(expr);
         }
         let valor = if let Some(operador) = compuesto {
             // El objetivo va tal cual: cada backend lo evalúa una sola vez.
-            let valor = self.parse_expresion_asignacion()?;
+            let valor = self.parsear_expresion_asignacion()?;
             match expr {
                 Expresion::Identificador { .. }
                 | Expresion::AccesoMiembro { .. }
@@ -504,7 +504,7 @@ impl Parser {
             }
         } else {
             self.avanzar(); // consumir =
-            self.parse_expresion_asignacion()? // asociativo a la derecha
+            self.parsear_expresion_asignacion()? // asociativo a la derecha
         };
         match expr {
             Expresion::Identificador { nombre, .. } => Ok(Expresion::Asignacion {
@@ -532,16 +532,16 @@ impl Parser {
     }
 
     /// Expresiones ternarias: cond ? verdadero : falso
-    pub(crate) fn parse_expresion_ternario(&mut self) -> Result<Expresion, ErrorForja> {
-        let cond = self.parse_expresion_logica()?;
+    pub(crate) fn parsear_expresion_ternario(&mut self) -> Result<Expresion, ErrorForja> {
+        let cond = self.parsear_expresion_logica()?;
         if self.coincide(TokenKind::Interrogacion) {
             self.avanzar(); // consumir ?
-            let si_verdadero = self.parse_expresion()?;
+            let si_verdadero = self.parsear_expresion()?;
             self.esperar(
                 TokenKind::DosPuntos,
                 "Se esperaba ':' en la expresión ternaria (condición ? verdadero : falso).",
             )?;
-            let si_falso = self.parse_expresion_ternario()?;
+            let si_falso = self.parsear_expresion_ternario()?;
             Ok(Expresion::Ternario {
                 condicion: Box::new(cond),
                 si_verdadero: Box::new(si_verdadero),
@@ -564,12 +564,12 @@ impl Parser {
     }
 
     /// Expresiones lógicas: || (O)
-    pub(crate) fn parse_expresion_logica(&mut self) -> Result<Expresion, ErrorForja> {
-        let mut expr = self.parse_expresion_y()?;
+    pub(crate) fn parsear_expresion_logica(&mut self) -> Result<Expresion, ErrorForja> {
+        let mut expr = self.parsear_expresion_y()?;
         while self.coincide(TokenKind::O) || self.coincide_operador_palabra("o") {
             let operador = Operador::O;
             self.avanzar();
-            let derecha = self.parse_expresion_y()?;
+            let derecha = self.parsear_expresion_y()?;
             expr = Expresion::Binaria {
                 izquierda: Box::new(expr),
                 operador,
@@ -580,12 +580,12 @@ impl Parser {
     }
 
     /// Expresiones lógicas: && (Y)
-    pub(crate) fn parse_expresion_y(&mut self) -> Result<Expresion, ErrorForja> {
-        let mut expr = self.parse_expresion_igualdad()?;
+    pub(crate) fn parsear_expresion_y(&mut self) -> Result<Expresion, ErrorForja> {
+        let mut expr = self.parsear_expresion_igualdad()?;
         while self.coincide(TokenKind::Y) || self.coincide_operador_palabra("y") {
             let operador = Operador::Y;
             self.avanzar();
-            let derecha = self.parse_expresion_igualdad()?;
+            let derecha = self.parsear_expresion_igualdad()?;
             expr = Expresion::Binaria {
                 izquierda: Box::new(expr),
                 operador,
@@ -596,8 +596,8 @@ impl Parser {
     }
 
     /// Expresiones de igualdad: ==, !=
-    pub(crate) fn parse_expresion_igualdad(&mut self) -> Result<Expresion, ErrorForja> {
-        let mut expr = self.parse_expresion_relacional()?;
+    pub(crate) fn parsear_expresion_igualdad(&mut self) -> Result<Expresion, ErrorForja> {
+        let mut expr = self.parsear_expresion_relacional()?;
         while self.coincide(TokenKind::IgualIgual) || self.coincide(TokenKind::Diferente) {
             let operador = if self.coincide(TokenKind::IgualIgual) {
                 self.avanzar();
@@ -606,7 +606,7 @@ impl Parser {
                 self.avanzar();
                 Operador::Diferente
             };
-            let derecha = self.parse_expresion_relacional()?;
+            let derecha = self.parsear_expresion_relacional()?;
             expr = Expresion::Binaria {
                 izquierda: Box::new(expr),
                 operador,
@@ -617,8 +617,8 @@ impl Parser {
     }
 
     /// Expresiones relacionales: >, <, >=, <=
-    pub(crate) fn parse_expresion_relacional(&mut self) -> Result<Expresion, ErrorForja> {
-        let mut expr = self.parse_expresion_aditiva()?;
+    pub(crate) fn parsear_expresion_relacional(&mut self) -> Result<Expresion, ErrorForja> {
+        let mut expr = self.parsear_expresion_aditiva()?;
         while self.coincide(TokenKind::Mayor)
             || self.coincide(TokenKind::Menor)
             || self.coincide(TokenKind::MayorIgual)
@@ -643,7 +643,7 @@ impl Parser {
                 }
                 _ => unreachable!(),
             };
-            let derecha = self.parse_expresion_aditiva()?;
+            let derecha = self.parsear_expresion_aditiva()?;
             expr = Expresion::Binaria {
                 izquierda: Box::new(expr),
                 operador,
@@ -654,8 +654,8 @@ impl Parser {
     }
 
     /// Expresiones aditivas: +, -
-    pub(crate) fn parse_expresion_aditiva(&mut self) -> Result<Expresion, ErrorForja> {
-        let mut expr = self.parse_expresion_multiplicativa()?;
+    pub(crate) fn parsear_expresion_aditiva(&mut self) -> Result<Expresion, ErrorForja> {
+        let mut expr = self.parsear_expresion_multiplicativa()?;
         while self.coincide(TokenKind::Mas) || self.coincide(TokenKind::Menos) {
             let operador = if self.coincide(TokenKind::Mas) {
                 self.avanzar();
@@ -664,7 +664,7 @@ impl Parser {
                 self.avanzar();
                 Operador::Resta
             };
-            let derecha = self.parse_expresion_multiplicativa()?;
+            let derecha = self.parsear_expresion_multiplicativa()?;
             expr = Expresion::Binaria {
                 izquierda: Box::new(expr),
                 operador,
@@ -675,8 +675,8 @@ impl Parser {
     }
 
     /// Expresiones multiplicativas: *, /, %
-    pub(crate) fn parse_expresion_multiplicativa(&mut self) -> Result<Expresion, ErrorForja> {
-        let mut expr = self.parse_expresion_unaria()?;
+    pub(crate) fn parsear_expresion_multiplicativa(&mut self) -> Result<Expresion, ErrorForja> {
+        let mut expr = self.parsear_expresion_unaria()?;
         while self.coincide(TokenKind::Por)
             || self.coincide(TokenKind::Dividido)
             || self.coincide(TokenKind::Porcentaje)
@@ -691,7 +691,7 @@ impl Parser {
                 self.avanzar();
                 Operador::Division
             };
-            let derecha = self.parse_expresion_unaria()?;
+            let derecha = self.parsear_expresion_unaria()?;
             expr = Expresion::Binaria {
                 izquierda: Box::new(expr),
                 operador,
@@ -702,10 +702,10 @@ impl Parser {
     }
 
     /// Expresiones unarias: !expr, -expr, &expr
-    pub(crate) fn parse_expresion_unaria(&mut self) -> Result<Expresion, ErrorForja> {
+    pub(crate) fn parsear_expresion_unaria(&mut self) -> Result<Expresion, ErrorForja> {
         if self.coincide(TokenKind::No) {
             self.avanzar();
-            let expr = self.parse_expresion_unaria()?;
+            let expr = self.parsear_expresion_unaria()?;
             return Ok(Expresion::Unaria {
                 operador: OperadorUnario::No,
                 expr: Box::new(expr),
@@ -723,7 +723,7 @@ impl Parser {
                     return Ok(Expresion::LiteralNumero(-n));
                 }
             }
-            let expr = self.parse_expresion_unaria()?;
+            let expr = self.parsear_expresion_unaria()?;
             return Ok(Expresion::Unaria {
                 operador: OperadorUnario::Negar,
                 expr: Box::new(expr),
@@ -736,20 +736,20 @@ impl Parser {
             if mutable {
                 self.avanzar();
             }
-            let expr = self.parse_expresion_unaria()?;
+            let expr = self.parsear_expresion_unaria()?;
             return Ok(Expresion::Referencia {
                 expr: Box::new(expr),
                 mutable,
             });
         }
 
-        self.parse_expresion_primaria()
+        self.parsear_expresion_primaria()
     }
 
     /// Expresiones primarias: literales, identificadores, llamadas, etc.
-    pub(crate) fn parse_expresion_primaria(&mut self) -> Result<Expresion, ErrorForja> {
-        let expr = self.parse_expresion_primaria_interna()?;
+    pub(crate) fn parsear_expresion_primaria(&mut self) -> Result<Expresion, ErrorForja> {
+        let expr = self.parsear_expresion_primaria_interna()?;
         // Después de parsear una primaria, verificar si hay postfijo (.method() o ())
-        self.parse_postfijo(expr)
+        self.parsear_postfijo(expr)
     }
 }

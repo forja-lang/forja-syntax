@@ -2,12 +2,12 @@ use super::*;
 
 impl Parser {
     /// Parsea un tipo (para anotaciones de tipo)
-    pub(crate) fn parse_tipo(&mut self) -> Result<Tipo, ErrorForja> {
-        self.parse_tipo_interno()
+    pub(crate) fn parsear_tipo(&mut self) -> Result<Tipo, ErrorForja> {
+        self.parsear_tipo_interno()
     }
 
-    /// Implementación interna de parse_tipo (profundidad ya verificada)
-    pub(crate) fn parse_tipo_interno(&mut self) -> Result<Tipo, ErrorForja> {
+    /// Implementación interna de parsear_tipo (profundidad ya verificada)
+    pub(crate) fn parsear_tipo_interno(&mut self) -> Result<Tipo, ErrorForja> {
         let token = self.peek().clone();
         match token.kind {
             TokenKind::TipoEntero => {
@@ -41,7 +41,7 @@ impl Parser {
                 // Verificar si sigue < para tipos genéricos: Nombre<T> o Nombre<T, E>
                 if self.coincide(TokenKind::Menor) {
                     self.avanzar(); // consumir <
-                    let tipo_params = self.parse_lista_tipos()?;
+                    let tipo_params = self.parsear_lista_tipos()?;
                     self.esperar(
                         TokenKind::Mayor,
                         "Se esperaba '>' para cerrar el tipo genérico.",
@@ -80,7 +80,7 @@ impl Parser {
                 // Tipo tupla: (Tipo1, Tipo2, ...) → consumir y retornar Clase("auto")
                 self.avanzar(); // consumir (
                 while !self.coincide(TokenKind::ParenCerrar) && !self.es_eof() {
-                    self.parse_tipo()?; // consumir cada tipo
+                    self.parsear_tipo()?; // consumir cada tipo
                     if self.coincide(TokenKind::Coma) {
                         self.avanzar();
                     }
@@ -99,15 +99,15 @@ impl Parser {
     }
 
     /// Parsea una lista de tipos separados por coma (para genéricos: <T, E>)
-    pub(crate) fn parse_lista_tipos(&mut self) -> Result<Vec<Tipo>, ErrorForja> {
+    pub(crate) fn parsear_lista_tipos(&mut self) -> Result<Vec<Tipo>, ErrorForja> {
         let mut tipos = Vec::new();
-        tipos.push(self.parse_tipo()?);
+        tipos.push(self.parsear_tipo()?);
         while self.coincide(TokenKind::Coma) {
             self.avanzar();
             if self.coincide(TokenKind::Mayor) {
                 break;
             }
-            tipos.push(self.parse_tipo()?);
+            tipos.push(self.parsear_tipo()?);
         }
         Ok(tipos)
     }
@@ -117,11 +117,11 @@ impl Parser {
     // ============================================================
 
     /// Parsea un bloque entre llaves
-    pub(crate) fn parse_bloque(&mut self) -> Result<Vec<Declaracion>, ErrorForja> {
+    pub(crate) fn parsear_bloque(&mut self) -> Result<Vec<Declaracion>, ErrorForja> {
         let mut declaraciones = Vec::new();
 
         while !self.coincide(TokenKind::LlaveCerrar) && !self.es_eof() {
-            match self.parse_declaracion() {
+            match self.parsear_declaracion() {
                 Ok(Some(decl)) => declaraciones.push(decl),
                 Ok(None) => break,
                 Err(mut err) => {
